@@ -190,6 +190,7 @@ impl LanceStore {
     // -----------------------------------------------------------------------
 
     /// Insert a single code embedding record.
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert_code_embedding(
         &self,
         id: &str,

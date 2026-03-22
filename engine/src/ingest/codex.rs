@@ -176,7 +176,7 @@ impl CodexIngester {
             let path = entry.path();
             if path.is_dir() {
                 Self::walk_jsonl_files(&path, out);
-            } else if path.extension().map_or(false, |ext| ext == "jsonl") {
+            } else if path.extension().is_some_and(|ext| ext == "jsonl") {
                 out.push(path);
             }
         }
@@ -218,10 +218,10 @@ impl CodexIngester {
             };
 
             // Track last timestamp for ended_at estimation.
-            if let Some(ref ts_str) = parsed.timestamp {
-                if let Some(ts) = parse_iso_timestamp(ts_str) {
-                    last_timestamp = Some(ts);
-                }
+            if let Some(ref ts_str) = parsed.timestamp
+                && let Some(ts) = parse_iso_timestamp(ts_str)
+            {
+                last_timestamp = Some(ts);
             }
 
             match parsed.line_type.as_str() {
@@ -359,7 +359,7 @@ impl CodexIngester {
                         match item.item_type.as_deref() {
                             Some("function_call") => {
                                 let tool_name = item.name.clone().unwrap_or_default();
-                                let command = item.arguments.clone().or_else(|| {
+                                let command = item.arguments.clone().or({
                                     // If arguments is not a string field,
                                     // it might be embedded elsewhere.
                                     None
@@ -383,19 +383,19 @@ impl CodexIngester {
                             }
                             Some("function_call_output") => {
                                 // Try to match back to the originating call.
-                                if let Some(ref cid) = item.call_id {
-                                    if let Some(&idx) = call_id_index.get(cid) {
-                                        let tc = &mut calls[idx];
-                                        let success = item
-                                            .status
-                                            .as_deref()
-                                            .map(|s| s == "completed" || s == "success");
-                                        tc.success = success;
-                                        if let Some(ref status) = item.status {
-                                            if status == "failed" || status == "error" {
-                                                tc.error_message = item.output.clone();
-                                            }
-                                        }
+                                if let Some(ref cid) = item.call_id
+                                    && let Some(&idx) = call_id_index.get(cid)
+                                {
+                                    let tc = &mut calls[idx];
+                                    let success = item
+                                        .status
+                                        .as_deref()
+                                        .map(|s| s == "completed" || s == "success");
+                                    tc.success = success;
+                                    if let Some(ref status) = item.status
+                                        && (status == "failed" || status == "error")
+                                    {
+                                        tc.error_message = item.output.clone();
                                     }
                                 }
                             }
@@ -603,15 +603,15 @@ fn parse_unix_timestamp(ts: i64) -> Option<NaiveDateTime> {
 /// Prefers the git repository URL, then falls back to the working directory.
 fn derive_project_id(meta: &SessionMetaPayload) -> Option<String> {
     // Try git repo URL first — extract "owner/repo" from GitHub URLs.
-    if let Some(ref git) = meta.git {
-        if let Some(ref url) = git.repository_url {
-            if let Some(slug) = extract_repo_slug(url) {
-                return Some(slug);
-            }
-            // Fall back to the full URL if we can't extract a slug.
-            if !url.is_empty() {
-                return Some(url.clone());
-            }
+    if let Some(ref git) = meta.git
+        && let Some(ref url) = git.repository_url
+    {
+        if let Some(slug) = extract_repo_slug(url) {
+            return Some(slug);
+        }
+        // Fall back to the full URL if we can't extract a slug.
+        if !url.is_empty() {
+            return Some(url.clone());
         }
     }
     // Fall back to cwd — use last path component as project name.

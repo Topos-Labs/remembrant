@@ -309,10 +309,10 @@ enum Commands {
 
 /// Expand a leading `~/` to the actual home directory.
 fn expand_tilde(path: &str) -> PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest);
-        }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
     }
     PathBuf::from(path)
 }
@@ -482,64 +482,64 @@ fn cmd_init() -> Result<()> {
     }
 
     // Codex
-    if detection.codex.is_some() {
-        if let Some(ingester) = CodexIngester::new() {
-            match ingester.ingest_all() {
-                Ok(result) => {
-                    let s_count = result.sessions.len();
-                    let m_count = result.memories.len();
-                    let t_count = result.tool_calls.len();
+    if detection.codex.is_some()
+        && let Some(ingester) = CodexIngester::new()
+    {
+        match ingester.ingest_all() {
+            Ok(result) => {
+                let s_count = result.sessions.len();
+                let m_count = result.memories.len();
+                let t_count = result.tool_calls.len();
 
-                    for session in &result.sessions {
-                        if let Err(e) = store.insert_session(session) {
-                            eprintln!("  [!] Failed to insert Codex session {}: {e}", session.id);
-                        }
+                for session in &result.sessions {
+                    if let Err(e) = store.insert_session(session) {
+                        eprintln!("  [!] Failed to insert Codex session {}: {e}", session.id);
                     }
-                    for memory in &result.memories {
-                        if let Err(e) = store.insert_memory(memory) {
-                            eprintln!("  [!] Failed to insert Codex memory: {e}");
-                        }
-                    }
-
-                    total_sessions += s_count;
-                    total_memories += m_count;
-                    total_tool_calls += t_count;
-                    println!(
-                        "  Codex CLI:   {s_count} sessions, {t_count} tool calls, {m_count} memories"
-                    );
                 }
-                Err(e) => eprintln!("  [!] Codex ingestion error: {e}"),
+                for memory in &result.memories {
+                    if let Err(e) = store.insert_memory(memory) {
+                        eprintln!("  [!] Failed to insert Codex memory: {e}");
+                    }
+                }
+
+                total_sessions += s_count;
+                total_memories += m_count;
+                total_tool_calls += t_count;
+                println!(
+                    "  Codex CLI:   {s_count} sessions, {t_count} tool calls, {m_count} memories"
+                );
             }
+            Err(e) => eprintln!("  [!] Codex ingestion error: {e}"),
         }
     }
 
     // Gemini
-    if detection.gemini.is_some() {
-        if let Some(ingester) = GeminiIngester::new() {
-            let (result, sessions, _tool_calls, memories) = ingester.ingest_all();
+    if detection.gemini.is_some()
+        && let Some(ingester) = GeminiIngester::new()
+    {
+        let (result, sessions, _tool_calls, memories) = ingester.ingest_all();
 
-            for session in &sessions {
-                if let Err(e) = store.insert_session(session) {
-                    eprintln!("  [!] Failed to insert Gemini session {}: {e}", session.id);
-                }
+        for session in &sessions {
+            if let Err(e) = store.insert_session(session) {
+                eprintln!("  [!] Failed to insert Gemini session {}: {e}", session.id);
             }
-            for memory in &memories {
-                if let Err(e) = store.insert_memory(memory) {
-                    eprintln!("  [!] Failed to insert Gemini memory: {e}");
-                }
+        }
+        for memory in &memories {
+            if let Err(e) = store.insert_memory(memory) {
+                eprintln!("  [!] Failed to insert Gemini memory: {e}");
             }
+        }
 
-            total_sessions += result.sessions_found;
-            total_memories += result.memories_found;
-            total_tool_calls += result.tool_calls_found;
-            println!(
-                "  Gemini CLI:  {} sessions, {} tool calls, {} memories",
-                result.sessions_found, result.tool_calls_found, result.memories_found
-            );
-            if !result.errors.is_empty() {
-                for err in &result.errors {
-                    eprintln!("  [!] Gemini: {err}");
-                }
+        total_sessions += result.sessions_found;
+        total_memories += result.memories_found;
+        total_tool_calls += result.tool_calls_found;
+        println!(
+            "  Gemini CLI:  {} sessions, {} tool calls, {} memories",
+            result.sessions_found, result.tool_calls_found, result.memories_found
+        );
+        if !result.errors.is_empty() {
+            for err in &result.errors {
+                eprintln!("  [!] Gemini: {err}");
             }
         }
     }
@@ -849,15 +849,15 @@ fn cmd_recent(limit: usize, agent: Option<&str>, project: Option<&str>) -> Resul
         .get_recent_sessions(fetch_limit)?
         .into_iter()
         .filter(|s| {
-            if let Some(a) = agent {
-                if !s.agent.eq_ignore_ascii_case(a) {
-                    return false;
-                }
+            if let Some(a) = agent
+                && !s.agent.eq_ignore_ascii_case(a)
+            {
+                return false;
             }
-            if let Some(p) = project {
-                if s.project_id.as_deref() != Some(p) {
-                    return false;
-                }
+            if let Some(p) = project
+                && s.project_id.as_deref() != Some(p)
+            {
+                return false;
             }
             true
         })
@@ -870,8 +870,8 @@ fn cmd_recent(limit: usize, agent: Option<&str>, project: Option<&str>) -> Resul
     }
 
     println!(
-        "{:<36}  {:<12}  {:<20}  {:>5}  {:>5}  {}",
-        "SESSION ID", "AGENT", "STARTED", "MSGS", "TOOLS", "SUMMARY"
+        "{:<36}  {:<12}  {:<20}  {:>5}  {:>5}  SUMMARY",
+        "SESSION ID", "AGENT", "STARTED", "MSGS", "TOOLS"
     );
     println!("{}", "-".repeat(110));
 
@@ -1009,7 +1009,7 @@ async fn cmd_search(
                     return false;
                 }
             }
-            if let Some(ref ctype) = content_type {
+            if let Some(ctype) = content_type {
                 let rt = r.metadata.get("type").map(|s| s.as_str()).unwrap_or("");
                 if !rt.to_lowercase().contains(&ctype.to_lowercase()) {
                     return false;
@@ -1021,14 +1021,12 @@ async fn cmd_search(
                     .get("started_at")
                     .or_else(|| r.metadata.get("created_at"))
                     .or_else(|| r.metadata.get("valid_at"));
-                if let Some(ts) = ts_str {
-                    if let Ok(ts) =
+                if let Some(ts) = ts_str
+                    && let Ok(ts) =
                         chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S%.f")
-                    {
-                        if ts < since_dt {
-                            return false;
-                        }
-                    }
+                    && ts < since_dt
+                {
+                    return false;
                 }
             }
             true
@@ -1457,11 +1455,11 @@ fn cmd_timeline(topic: &str, since: Option<&str>) -> Result<()> {
         if let Some(since_dt) = parse_since(since_str) {
             let filtered_sessions: Vec<_> = sessions
                 .into_iter()
-                .filter(|s| s.started_at.map_or(false, |dt| dt >= since_dt))
+                .filter(|s| s.started_at.is_some_and(|dt| dt >= since_dt))
                 .collect();
             let filtered_memories: Vec<_> = memories
                 .into_iter()
-                .filter(|m| m.created_at.map_or(false, |dt| dt >= since_dt))
+                .filter(|m| m.created_at.is_some_and(|dt| dt >= since_dt))
                 .collect();
             (filtered_sessions, filtered_memories)
         } else {
@@ -1515,10 +1513,10 @@ fn cmd_patterns(topic: Option<&str>) -> Result<()> {
         let entry = pattern_groups
             .entry(content)
             .or_insert_with(|| (Vec::new(), None));
-        if let Some(ref pid) = m.project_id {
-            if !entry.0.contains(pid) {
-                entry.0.push(pid.clone());
-            }
+        if let Some(ref pid) = m.project_id
+            && !entry.0.contains(pid)
+        {
+            entry.0.push(pid.clone());
         }
         if let Some(created) = m.created_at {
             match entry.1 {
@@ -1923,55 +1921,55 @@ async fn cmd_ingest(skip_embed: bool, skip_distill: bool) -> Result<()> {
     }
 
     // Codex
-    if detection.codex.is_some() {
-        if let Some(ingester) = CodexIngester::new() {
-            match ingester.ingest_all() {
-                Ok(result) => {
-                    println!(
-                        "  ✓ Codex CLI:   {} sessions, {} tool calls, {} memories",
-                        result.sessions.len(),
-                        result.tool_calls.len(),
-                        result.memories.len()
-                    );
-                    for s in &result.sessions {
-                        let _ = store.insert_or_replace_session(s);
-                    }
-                    for m in &result.memories {
-                        let _ = store.insert_memory(m);
-                    }
-                    for tc in &result.tool_calls {
-                        let _ = store.insert_tool_call(tc);
-                    }
-                    all_sessions.extend(result.sessions);
-                    all_memories.extend(result.memories);
-                    all_tool_calls.extend(result.tool_calls);
+    if detection.codex.is_some()
+        && let Some(ingester) = CodexIngester::new()
+    {
+        match ingester.ingest_all() {
+            Ok(result) => {
+                println!(
+                    "  ✓ Codex CLI:   {} sessions, {} tool calls, {} memories",
+                    result.sessions.len(),
+                    result.tool_calls.len(),
+                    result.memories.len()
+                );
+                for s in &result.sessions {
+                    let _ = store.insert_or_replace_session(s);
                 }
-                Err(e) => eprintln!("  ✗ Codex CLI: {e}"),
+                for m in &result.memories {
+                    let _ = store.insert_memory(m);
+                }
+                for tc in &result.tool_calls {
+                    let _ = store.insert_tool_call(tc);
+                }
+                all_sessions.extend(result.sessions);
+                all_memories.extend(result.memories);
+                all_tool_calls.extend(result.tool_calls);
             }
+            Err(e) => eprintln!("  ✗ Codex CLI: {e}"),
         }
     }
 
     // Gemini
-    if detection.gemini.is_some() {
-        if let Some(ingester) = GeminiIngester::new() {
-            let (result, sessions, tool_calls, memories) = ingester.ingest_all();
-            println!(
-                "  ✓ Gemini CLI:  {} sessions, {} tool calls, {} memories",
-                result.sessions_found, result.tool_calls_found, result.memories_found
-            );
-            for s in &sessions {
-                let _ = store.insert_or_replace_session(s);
-            }
-            for m in &memories {
-                let _ = store.insert_memory(m);
-            }
-            for tc in &tool_calls {
-                let _ = store.insert_tool_call(tc);
-            }
-            all_sessions.extend(sessions);
-            all_memories.extend(memories);
-            all_tool_calls.extend(tool_calls);
+    if detection.gemini.is_some()
+        && let Some(ingester) = GeminiIngester::new()
+    {
+        let (result, sessions, tool_calls, memories) = ingester.ingest_all();
+        println!(
+            "  ✓ Gemini CLI:  {} sessions, {} tool calls, {} memories",
+            result.sessions_found, result.tool_calls_found, result.memories_found
+        );
+        for s in &sessions {
+            let _ = store.insert_or_replace_session(s);
         }
+        for m in &memories {
+            let _ = store.insert_memory(m);
+        }
+        for tc in &tool_calls {
+            let _ = store.insert_tool_call(tc);
+        }
+        all_sessions.extend(sessions);
+        all_memories.extend(memories);
+        all_tool_calls.extend(tool_calls);
     }
 
     let total_s = all_sessions.len();
@@ -2619,11 +2617,7 @@ async fn main() -> Result<()> {
             cmd_timeline(&topic, since.as_deref())?;
         }
         Commands::Note { text, project, tag } => {
-            cmd_note(
-                &text,
-                project.as_deref(),
-                tag.as_ref().map(|v| v.as_slice()),
-            )?;
+            cmd_note(&text, project.as_deref(), tag.as_deref())?;
         }
         Commands::Forget { session } => {
             cmd_forget(&session)?;

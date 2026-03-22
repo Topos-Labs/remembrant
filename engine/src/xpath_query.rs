@@ -132,7 +132,7 @@ impl<'a> Parser<'a> {
     }
 
     fn skip_ws(&mut self) {
-        while self.peek().map_or(false, |c| c.is_ascii_whitespace()) {
+        while self.peek().is_some_and(|c| c.is_ascii_whitespace()) {
             self.advance(1);
         }
     }
@@ -201,10 +201,7 @@ impl<'a> Parser<'a> {
             return Ok(NodeSelect::Wildcard);
         }
         let start = self.pos;
-        while self
-            .peek()
-            .map_or(false, |c| c.is_alphanumeric() || c == '_')
-        {
+        while self.peek().is_some_and(|c| c.is_alphanumeric() || c == '_') {
             self.advance(1);
         }
         let name = &self.input[start..self.pos];
@@ -279,10 +276,7 @@ impl<'a> Parser<'a> {
         }
 
         // Positional / range: starts with digit or '-'
-        if self
-            .peek()
-            .map_or(false, |c| c.is_ascii_digit() || c == '-')
-        {
+        if self.peek().is_some_and(|c| c.is_ascii_digit() || c == '-') {
             return self.parse_positional_or_range();
         }
 
@@ -362,7 +356,7 @@ impl<'a> Parser<'a> {
         if self.peek() == Some('-') {
             self.advance(1);
         }
-        while self.peek().map_or(false, |c| c.is_ascii_digit()) {
+        while self.peek().is_some_and(|c| c.is_ascii_digit()) {
             self.advance(1);
         }
         let s = &self.input[start..self.pos];
@@ -414,10 +408,7 @@ impl<'a> Parser<'a> {
 
     fn parse_ident(&mut self) -> Result<String, ParseError> {
         let start = self.pos;
-        while self
-            .peek()
-            .map_or(false, |c| c.is_alphanumeric() || c == '_')
-        {
+        while self.peek().is_some_and(|c| c.is_alphanumeric() || c == '_') {
             self.advance(1);
         }
         let s = &self.input[start..self.pos];
@@ -436,7 +427,7 @@ impl<'a> Parser<'a> {
         }
         self.advance(1);
         let start = self.pos;
-        while self.peek().map_or(false, |c| c != quote) {
+        while self.peek().is_some_and(|c| c != quote) {
             self.advance(self.peek().unwrap().len_utf8());
         }
         let s = self.input[start..self.pos].to_string();
@@ -448,7 +439,7 @@ impl<'a> Parser<'a> {
         let start = self.pos;
         while self
             .peek()
-            .map_or(false, |c| !c.is_ascii_whitespace() && c != ']' && c != ')')
+            .is_some_and(|c| !c.is_ascii_whitespace() && c != ']' && c != ')')
         {
             self.advance(1);
         }
@@ -627,7 +618,7 @@ fn apply_predicate<'a>(
             .collect(),
         Predicate::AttrEquals(key, value) => set
             .into_iter()
-            .filter(|(_, n, _)| n.attributes.get(key.as_str()).map_or(false, |v| v == value))
+            .filter(|(_, n, _)| n.attributes.get(key.as_str()) == Some(value))
             .collect(),
         Predicate::Comparison(key, op, value) => {
             let target: f64 = value.parse().unwrap_or(f64::NAN);

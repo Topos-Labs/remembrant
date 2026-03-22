@@ -103,7 +103,7 @@ impl SemanticScorer {
             return Ok(());
         }
 
-        let refs: Vec<&str> = new_texts.iter().copied().collect();
+        let refs: Vec<&str> = new_texts.to_vec();
         let embeddings = provider.embed_texts(&refs).await?;
 
         for (text, embedding) in new_texts.into_iter().zip(embeddings.into_iter()) {

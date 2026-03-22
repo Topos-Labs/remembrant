@@ -292,46 +292,43 @@ impl ClaudeIngester {
                 }
 
                 // Extract tool_use blocks from assistant content.
-                if msg.role.as_deref() == Some("assistant") {
-                    if let Some(content_val) = &msg.content {
-                        let blocks = extract_content_blocks(content_val);
-                        for block in blocks {
-                            if block.block_type.as_deref() != Some("tool_use") {
-                                continue;
-                            }
-                            let tool_name = block.name.clone();
-                            let command = extract_tool_command(&block);
-
-                            // Track files changed via Read/Write/Edit tools.
-                            if let Some(ref name) = tool_name {
-                                if matches!(name.as_str(), "Write" | "Edit" | "Read") {
-                                    if let Some(ref input) = block.input {
-                                        if let Some(fp) = input
-                                            .get("file_path")
-                                            .or_else(|| input.get("path"))
-                                            .and_then(|v| v.as_str())
-                                        {
-                                            let fp = fp.to_string();
-                                            if !stats.files_changed.contains(&fp) {
-                                                stats.files_changed.push(fp);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            let tc = ToolCall {
-                                id: Uuid::new_v4().to_string(),
-                                session_id: Some(session_id.to_string()),
-                                tool_name,
-                                command,
-                                success: None,
-                                error_message: None,
-                                duration_ms: None,
-                                timestamp: parsed.timestamp.as_deref().and_then(parse_iso8601),
-                            };
-                            stats.tool_calls.push(tc);
+                if msg.role.as_deref() == Some("assistant")
+                    && let Some(content_val) = &msg.content
+                {
+                    let blocks = extract_content_blocks(content_val);
+                    for block in blocks {
+                        if block.block_type.as_deref() != Some("tool_use") {
+                            continue;
                         }
+                        let tool_name = block.name.clone();
+                        let command = extract_tool_command(&block);
+
+                        // Track files changed via Read/Write/Edit tools.
+                        if let Some(ref name) = tool_name
+                            && matches!(name.as_str(), "Write" | "Edit" | "Read")
+                            && let Some(ref input) = block.input
+                            && let Some(fp) = input
+                                .get("file_path")
+                                .or_else(|| input.get("path"))
+                                .and_then(|v| v.as_str())
+                        {
+                            let fp = fp.to_string();
+                            if !stats.files_changed.contains(&fp) {
+                                stats.files_changed.push(fp);
+                            }
+                        }
+
+                        let tc = ToolCall {
+                            id: Uuid::new_v4().to_string(),
+                            session_id: Some(session_id.to_string()),
+                            tool_name,
+                            command,
+                            success: None,
+                            error_message: None,
+                            duration_ms: None,
+                            timestamp: parsed.timestamp.as_deref().and_then(parse_iso8601),
+                        };
+                        stats.tool_calls.push(tc);
                     }
                 }
             }
@@ -480,7 +477,7 @@ impl ClaudeIngester {
             if let Ok(entries) = fs::read_dir(project_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if !path.is_dir() || path.file_name().map_or(true, |n| n == "memory") {
+                    if !path.is_dir() || path.file_name().is_none_or(|n| n == "memory") {
                         continue;
                     }
                     let subagents_dir = path.join("subagents");

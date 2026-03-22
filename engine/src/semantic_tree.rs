@@ -718,7 +718,7 @@ impl<'a> TreeBuilder<'a> {
         .with_attr("subject", &fact.subject)
         .with_attr("predicate", &fact.predicate)
         .with_attr("object", &fact.object)
-        .with_attr("confidence", &fact.confidence.to_string())
+        .with_attr("confidence", fact.confidence.to_string())
         .with_attr("status", status);
 
         if let Some(ref agent) = fact.source_agent {

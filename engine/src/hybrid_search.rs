@@ -144,9 +144,10 @@ pub fn classify_query(query: &str) -> QueryComplexity {
     let question_words = [
         "what", "why", "how", "when", "where", "which", "explain", "describe",
     ];
-    if words.first().map_or(false, |w| {
-        question_words.contains(&w.to_lowercase().as_str())
-    }) {
+    if words
+        .first()
+        .is_some_and(|w| question_words.contains(&w.to_lowercase().as_str()))
+    {
         return QueryComplexity::Slow;
     }
 
@@ -585,26 +586,6 @@ impl<'a> HybridSearch<'a> {
         Ok(results)
     }
 
-    // Keep the old search_text for backward compat with topic_context in context.rs
-    fn search_text(&self, query: &str, scored: &mut HashMap<String, HybridResult>) -> Result<()> {
-        let ranked = self.search_text_ranked(query)?;
-        for r in ranked {
-            let key = format!("{}:{}", r.result_type, r.id);
-            scored.insert(
-                key,
-                HybridResult {
-                    id: r.id,
-                    content: r.content,
-                    result_type: r.result_type,
-                    score: r.raw_score,
-                    sources: r.sources,
-                    metadata: r.metadata,
-                },
-            );
-        }
-        Ok(())
-    }
-
     // -----------------------------------------------------------------------
     // Internal: vector search layer (returns ranked list for RRF)
     // -----------------------------------------------------------------------
@@ -766,17 +747,15 @@ impl<'a> HybridSearch<'a> {
                 .get("started_at")
                 .or_else(|| result.metadata.get("created_at"))
                 .or_else(|| result.metadata.get("valid_at"))
-            {
-                if let Ok(ts) =
+                && let Ok(ts) =
                     chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S%.f")
-                {
-                    let age_hours = (now - ts).num_hours().max(1) as f64;
-                    let decay = self
-                        .weights
-                        .recency_boost
-                        .powf(1.0 / (age_hours / 24.0 + 1.0).log2().max(1.0));
-                    result.score *= decay;
-                }
+            {
+                let age_hours = (now - ts).num_hours().max(1) as f64;
+                let decay = self
+                    .weights
+                    .recency_boost
+                    .powf(1.0 / (age_hours / 24.0 + 1.0).log2().max(1.0));
+                result.score *= decay;
             }
         }
 
@@ -786,35 +765,6 @@ impl<'a> HybridSearch<'a> {
                 .partial_cmp(&a.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-    }
-
-    // Keep old method for backward compatibility with context.rs search_text usage
-    fn apply_recency_boost(&self, scored: &mut HashMap<String, HybridResult>) {
-        if (self.weights.recency_boost - 1.0).abs() < f64::EPSILON {
-            return;
-        }
-
-        let now = chrono::Utc::now().naive_utc();
-
-        for result in scored.values_mut() {
-            if let Some(ts_str) = result
-                .metadata
-                .get("started_at")
-                .or_else(|| result.metadata.get("created_at"))
-                .or_else(|| result.metadata.get("valid_at"))
-            {
-                if let Ok(ts) =
-                    chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S%.f")
-                {
-                    let age_hours = (now - ts).num_hours().max(1) as f64;
-                    let decay = self
-                        .weights
-                        .recency_boost
-                        .powf(1.0 / (age_hours / 24.0 + 1.0).log2().max(1.0));
-                    result.score *= decay;
-                }
-            }
-        }
     }
 }
 

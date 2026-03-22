@@ -7,9 +7,9 @@
 //! - **Consolidation**: Merge similar memories, boosting confidence
 
 use anyhow::Result;
-use chrono::{NaiveDateTime, Utc};
+use chrono::Utc;
 
-use crate::store::duckdb::{DuckStore, Memory};
+use crate::store::duckdb::DuckStore;
 
 /// Decay score for a memory, combining multiple signals into [0, 1].
 #[derive(Debug, Clone)]
@@ -173,18 +173,15 @@ pub fn consolidate(
     project: Option<&str>,
     merge_threshold: f64,
 ) -> Result<(ConsolidationStats, Vec<DecayScore>, Vec<MergeCandidate>)> {
-    let mut stats = ConsolidationStats::default();
-
-    // Phase 1: Expire stale memories
-    stats.expired_count = expire_stale_memories(store)?;
-
-    // Phase 2: Find merge candidates
+    let expired_count = expire_stale_memories(store)?;
     let candidates = find_merge_candidates(store, project, merge_threshold)?;
-    stats.merged_count = candidates.len();
-
-    // Phase 3: Compute decay scores
     let scores = compute_decay_scores(store, project)?;
-    stats.scored_count = scores.len();
+
+    let stats = ConsolidationStats {
+        expired_count,
+        merged_count: candidates.len(),
+        scored_count: scores.len(),
+    };
 
     Ok((stats, scores, candidates))
 }

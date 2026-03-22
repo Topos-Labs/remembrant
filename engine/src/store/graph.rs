@@ -225,10 +225,10 @@ impl GraphStoreBackend for GraphStore {
         let mut results = Vec::new();
 
         for edge in edges.iter() {
-            if let Some(filter) = edge_kind {
-                if edge.kind != filter {
-                    continue;
-                }
+            if let Some(filter) = edge_kind
+                && edge.kind != filter
+            {
+                continue;
             }
 
             if edge.from_id == id {
@@ -239,14 +239,14 @@ impl GraphStoreBackend for GraphStore {
                         direction: Direction::Outgoing,
                     });
                 }
-            } else if edge.to_id == id {
-                if let Some(node) = nodes.get(&edge.from_id) {
-                    results.push(Neighbor {
-                        node: node.clone(),
-                        edge_kind: edge.kind,
-                        direction: Direction::Incoming,
-                    });
-                }
+            } else if edge.to_id == id
+                && let Some(node) = nodes.get(&edge.from_id)
+            {
+                results.push(Neighbor {
+                    node: node.clone(),
+                    edge_kind: edge.kind,
+                    direction: Direction::Incoming,
+                });
             }
         }
 

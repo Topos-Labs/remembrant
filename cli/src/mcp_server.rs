@@ -27,6 +27,7 @@ use serde_json::Value;
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
+    #[allow(dead_code)]
     jsonrpc: String,
     id: Option<Value>,
     method: String,
@@ -616,7 +617,7 @@ impl McpServer {
         };
 
         match format {
-            "json" => ctx.to_json().map_err(Into::into),
+            "json" => ctx.to_json(),
             _ => Ok(ctx.to_prompt_block()),
         }
     }

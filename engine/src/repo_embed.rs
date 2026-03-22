@@ -521,7 +521,7 @@ impl RepoEmbedder {
 
         // Embed in batches.
         let batch_size = batch_size.max(1);
-        let n_batches = (texts.len() + batch_size - 1) / batch_size;
+        let n_batches = texts.len().div_ceil(batch_size);
         info!(total_chunks, batch_size, n_batches, "embedding chunks");
 
         let mut all_vectors: Vec<Vec<f32>> = Vec::with_capacity(total_chunks);

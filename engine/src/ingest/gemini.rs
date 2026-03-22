@@ -256,12 +256,12 @@ impl GeminiIngester {
         // Scan tmp/ directories so we know which hash dirs exist.
         // Store hash -> hash as a fallback name.
         let tmp_dir = self.base_path.join("tmp");
-        if tmp_dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(&tmp_dir) {
-                for entry in entries.flatten() {
-                    let hash_name = entry.file_name().to_string_lossy().to_string();
-                    map.insert(hash_name.clone(), hash_name.clone());
-                }
+        if tmp_dir.is_dir()
+            && let Ok(entries) = std::fs::read_dir(&tmp_dir)
+        {
+            for entry in entries.flatten() {
+                let hash_name = entry.file_name().to_string_lossy().to_string();
+                map.insert(hash_name.clone(), hash_name.clone());
             }
         }
 

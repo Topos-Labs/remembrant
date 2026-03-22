@@ -542,7 +542,7 @@ impl<B: GraphBackend> GraphBuilder<B> {
 
         // For each file with multiple sessions, link the sessions pairwise
         let mut linked: HashSet<(String, String)> = HashSet::new();
-        for (_file, session_ids) in &file_sessions {
+        for session_ids in file_sessions.values() {
             if session_ids.len() < 2 {
                 continue;
             }
@@ -711,7 +711,7 @@ fn looks_like_file_path(s: &str) -> bool {
     }
     // Must contain a dot (for extension) or a slash (for path)
     let has_slash = s.contains('/');
-    let has_ext = s.rsplit('.').next().map_or(false, |ext| {
+    let has_ext = s.rsplit('.').next().is_some_and(|ext| {
         matches!(
             ext,
             "rs" | "py"
