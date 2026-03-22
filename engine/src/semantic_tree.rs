@@ -39,6 +39,7 @@ pub enum TreeNodeType {
     ToolCall,
     CodeEntity,
     Symbol,
+    Fact,
 }
 
 impl TreeNodeType {
@@ -53,6 +54,7 @@ impl TreeNodeType {
             Self::ToolCall => "ToolCall",
             Self::CodeEntity => "CodeEntity",
             Self::Symbol => "Symbol",
+            Self::Fact => "Fact",
         }
     }
 
@@ -72,6 +74,7 @@ impl TreeNodeType {
             "ToolCall" => Some(Self::ToolCall),
             "CodeEntity" => Some(Self::CodeEntity),
             "Symbol" => Some(Self::Symbol),
+            "Fact" => Some(Self::Fact),
             _ => None,
         }
     }
@@ -87,6 +90,7 @@ impl TreeNodeType {
             "toolcall" | "tool_call" => Some(Self::ToolCall),
             "codeentity" | "code_entity" => Some(Self::CodeEntity),
             "symbol" => Some(Self::Symbol),
+            "fact" => Some(Self::Fact),
             _ => None,
         }
     }
@@ -95,7 +99,7 @@ impl TreeNodeType {
     pub fn child_types(&self) -> &[TreeNodeType] {
         match self {
             Self::Root => &[TreeNodeType::Project],
-            Self::Project => &[TreeNodeType::Session, TreeNodeType::Memory],
+            Self::Project => &[TreeNodeType::Session, TreeNodeType::Memory, TreeNodeType::Fact],
             Self::Session => &[
                 TreeNodeType::Decision,
                 TreeNodeType::Memory,
@@ -104,7 +108,7 @@ impl TreeNodeType {
             ],
             Self::CodeEntity => &[TreeNodeType::Symbol],
             // Leaf nodes
-            Self::Decision | Self::Memory | Self::ToolCall | Self::Symbol => &[],
+            Self::Decision | Self::Memory | Self::ToolCall | Self::Symbol | Self::Fact => &[],
         }
     }
 }
@@ -179,7 +183,7 @@ impl TreeNode {
     ///
     /// Symbol nodes are always considered loaded (they are leaf nodes).
     pub fn is_loaded(&self) -> bool {
-        !self.children.is_empty() || self.node_type == TreeNodeType::Symbol
+        !self.children.is_empty() || self.node_type == TreeNodeType::Symbol || self.node_type == TreeNodeType::Fact
     }
 
     /// Count all nodes in this subtree (including self).
@@ -231,7 +235,7 @@ impl TreeSchema {
         hierarchy.insert(TreeNodeType::Root, vec![TreeNodeType::Project]);
         hierarchy.insert(
             TreeNodeType::Project,
-            vec![TreeNodeType::Session, TreeNodeType::Memory],
+            vec![TreeNodeType::Session, TreeNodeType::Memory, TreeNodeType::Fact],
         );
         hierarchy.insert(
             TreeNodeType::Session,
@@ -248,6 +252,7 @@ impl TreeSchema {
         hierarchy.insert(TreeNodeType::Memory, vec![]);
         hierarchy.insert(TreeNodeType::ToolCall, vec![]);
         hierarchy.insert(TreeNodeType::Symbol, vec![]);
+        hierarchy.insert(TreeNodeType::Fact, vec![]);
 
         Self { hierarchy }
     }
@@ -321,7 +326,8 @@ impl<'a> TreeBuilder<'a> {
             TreeNodeType::Decision
             | TreeNodeType::Memory
             | TreeNodeType::ToolCall
-            | TreeNodeType::Symbol => Ok(()),
+            | TreeNodeType::Symbol
+            | TreeNodeType::Fact => Ok(()),
         }
     }
 
@@ -411,6 +417,14 @@ impl<'a> TreeBuilder<'a> {
                     Ok(None)
                 }
             }
+            "fact" => {
+                let facts = self.store.search_facts("")?;
+                if let Some(fact) = facts.into_iter().find(|f| f.id == id) {
+                    Ok(Some(self.fact_to_node(&fact)))
+                } else {
+                    Ok(None)
+                }
+            }
             "toolcall" => {
                 // ToolCalls don't have a global search, so we can't find by ID
                 // without knowing the session. Return None.
@@ -482,6 +496,12 @@ impl<'a> TreeBuilder<'a> {
         for memory in &all_memories {
             let memory_node = self.memory_to_node(memory);
             node.children.push(memory_node);
+        }
+
+        // Active facts for this project
+        let facts = self.store.get_active_facts(Some(&project_id), 1000)?;
+        for fact in &facts {
+            node.children.push(self.fact_to_node(fact));
         }
 
         Ok(())
@@ -686,6 +706,31 @@ impl<'a> TreeBuilder<'a> {
             "{}: {}",
             tc.tool_name.as_deref().unwrap_or("(unknown)"),
             tc.command.as_deref().unwrap_or("(no command)")
+        );
+
+        node
+    }
+
+    fn fact_to_node(&self, fact: &crate::store::duckdb::Fact) -> TreeNode {
+        let status = if fact.invalid_at.is_some() { "invalidated" } else { "active" };
+        let mut node = TreeNode::new(
+            format!("fact:{}", fact.id),
+            TreeNodeType::Fact,
+            format!("{} {} {}", fact.subject, fact.predicate, fact.object),
+        )
+        .with_attr("subject", &fact.subject)
+        .with_attr("predicate", &fact.predicate)
+        .with_attr("object", &fact.object)
+        .with_attr("confidence", &fact.confidence.to_string())
+        .with_attr("status", status);
+
+        if let Some(ref agent) = fact.source_agent {
+            node = node.with_attr("source_agent", agent);
+        }
+
+        node.text_repr = format!(
+            "{} {} {} | confidence: {} | {}",
+            fact.subject, fact.predicate, fact.object, fact.confidence, status
         );
 
         node

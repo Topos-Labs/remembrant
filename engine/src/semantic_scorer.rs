@@ -21,8 +21,8 @@ use crate::xpath_query::{Predicate, XPathQuery};
 /// infrastructure is in place so that embedding-based cosine similarity can be
 /// plugged in later when LanceDB node embeddings are available.
 pub struct SemanticScorer {
-    /// Precomputed query embeddings cache: query_text -> embedding vector.
-    cache: HashMap<String, Vec<f32>>,
+    /// Precomputed query/node embeddings cache: text -> embedding vector.
+    pub(crate) cache: HashMap<String, Vec<f32>>,
 }
 
 impl SemanticScorer {
@@ -67,20 +67,50 @@ impl SemanticScorer {
 
     /// Score a node's text against a query string.
     ///
-    /// Returns a similarity score in `[0.0, 1.0]`. If no embedding is cached for
-    /// the query text, falls back to `keyword_scorer`.
+    /// Returns a similarity score in `[0.0, 1.0]`. If embeddings are cached for
+    /// both the query and node text, uses cosine similarity. Otherwise falls back
+    /// to `keyword_scorer`.
     pub fn score(&self, node_text: &str, query_text: &str) -> f64 {
-        // MVP: always use keyword scorer. When node embeddings are available via
-        // LanceDB, this path can compute cosine similarity against the cached
-        // query embedding instead.
-        if self.cache.contains_key(query_text) {
-            // Future: compute node embedding on the fly or look it up in LanceDB,
-            // then return cosine_similarity(node_embedding, cached_query_embedding).
-            // For now, fall back to keyword scoring.
+        if let (Some(query_emb), Some(node_emb)) =
+            (self.cache.get(query_text), self.cache.get(node_text))
+        {
+            // Both embeddings available: use cosine similarity
+            let sim = cosine_similarity(query_emb, node_emb);
+            // Cosine similarity is in [-1, 1]; clamp to [0, 1]
+            sim.max(0.0)
+        } else if let Some(_query_emb) = self.cache.get(query_text) {
+            // Query embedding available but no node embedding: keyword fallback
             keyword_scorer(node_text, query_text)
         } else {
             keyword_scorer(node_text, query_text)
         }
+    }
+
+    /// Precompute embeddings for node texts (used to enable cosine scoring).
+    pub async fn precompute_nodes<P: EmbedProvider>(
+        &mut self,
+        node_texts: &[&str],
+        provider: &P,
+    ) -> Result<()> {
+        // Filter out already-cached texts
+        let new_texts: Vec<&str> = node_texts
+            .iter()
+            .filter(|t| !self.cache.contains_key(**t))
+            .copied()
+            .collect();
+
+        if new_texts.is_empty() {
+            return Ok(());
+        }
+
+        let refs: Vec<&str> = new_texts.iter().copied().collect();
+        let embeddings = provider.embed_texts(&refs).await?;
+
+        for (text, embedding) in new_texts.into_iter().zip(embeddings.into_iter()) {
+            self.cache.insert(text.to_string(), embedding);
+        }
+
+        Ok(())
     }
 
     /// Create a scorer closure suitable for use with `evaluate()`.
@@ -189,6 +219,29 @@ pub fn benchmark_xpath_vs_flat(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Cosine similarity between two vectors. Returns a value in `[-1.0, 1.0]`.
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0f64;
+    let mut norm_a = 0.0f64;
+    let mut norm_b = 0.0f64;
+    for (x, y) in a.iter().zip(b.iter()) {
+        let x = *x as f64;
+        let y = *y as f64;
+        dot += x * y;
+        norm_a += x * x;
+        norm_b += y * y;
+    }
+    let denom = norm_a.sqrt() * norm_b.sqrt();
+    if denom < 1e-12 {
+        0.0
+    } else {
+        dot / denom
+    }
+}
 
 /// Recursively collect all semantic query strings from a list of predicates.
 fn collect_semantic_strings(predicates: &[Predicate], out: &mut Vec<String>) {
@@ -315,6 +368,46 @@ mod tests {
         }
         assert!(strings.contains(&"auth".to_string()));
         assert!(strings.contains(&"login".to_string()));
+    }
+
+    #[test]
+    fn test_cosine_similarity_identical() {
+        let a = vec![1.0f32, 2.0, 3.0];
+        let sim = cosine_similarity(&a, &a);
+        assert!((sim - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_cosine_similarity_orthogonal() {
+        let a = vec![1.0f32, 0.0];
+        let b = vec![0.0f32, 1.0];
+        let sim = cosine_similarity(&a, &b);
+        assert!(sim.abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_cosine_similarity_opposite() {
+        let a = vec![1.0f32, 0.0];
+        let b = vec![-1.0f32, 0.0];
+        let sim = cosine_similarity(&a, &b);
+        assert!((sim - (-1.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_cosine_similarity_empty() {
+        let sim = cosine_similarity(&[], &[]);
+        assert!(sim.abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_semantic_scorer_with_cached_embeddings() {
+        let mut scorer = SemanticScorer::new();
+        // Manually insert embeddings to test cosine path
+        scorer.cache.insert("auth login".to_string(), vec![1.0, 0.0, 0.0]);
+        scorer.cache.insert("authentication session".to_string(), vec![0.9, 0.1, 0.0]);
+        let score = scorer.score("authentication session", "auth login");
+        // Should use cosine similarity, not keyword scorer
+        assert!(score > 0.9, "cosine similarity should be high, got {score}");
     }
 
     #[test]

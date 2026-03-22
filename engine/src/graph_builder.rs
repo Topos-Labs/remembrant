@@ -196,6 +196,42 @@ impl GraphBackend for DuckStore {
     }
 }
 
+impl GraphBackend for &DuckStore {
+    fn add_node(&self, id: &str, kind: &str, name: &str, properties: &str) -> Result<()> {
+        (*self).insert_graph_node(id, kind, name, properties)
+    }
+    fn add_edge(&self, from_id: &str, to_id: &str, kind: &str, properties: &str) -> Result<()> {
+        (*self).insert_graph_edge(from_id, to_id, kind, properties)
+    }
+    fn get_node(&self, id: &str) -> Result<Option<(String, String, String, String)>> {
+        let row = (*self).get_graph_node(id)?;
+        Ok(row.map(|r| (r.id, r.kind, r.name, r.properties)))
+    }
+    fn delete_node(&self, id: &str) -> Result<bool> {
+        (*self).delete_graph_node(id)
+    }
+    fn query_neighbors(&self, id: &str, edge_kind: Option<&str>) -> Result<Vec<NeighborInfo>> {
+        let rows = (*self).query_graph_neighbors(id, edge_kind)?;
+        Ok(rows
+            .into_iter()
+            .map(|r| NeighborInfo {
+                id: r.node.id,
+                kind: r.node.kind,
+                name: r.node.name,
+                properties: r.node.properties,
+                edge_kind: r.edge_kind,
+                direction: r.direction,
+            })
+            .collect())
+    }
+    fn node_count(&self) -> Result<usize> {
+        (*self).count_graph_nodes()
+    }
+    fn edge_count(&self) -> Result<usize> {
+        (*self).count_graph_edges()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Neighbor with depth (for BFS traversal results)
 // ---------------------------------------------------------------------------

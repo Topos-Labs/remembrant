@@ -171,6 +171,11 @@ impl GraphStore {
             edges: Mutex::new(Vec::new()),
         }
     }
+
+    /// Return all nodes in the graph (for search/iteration).
+    pub fn all_nodes(&self) -> Result<Vec<GraphNode>> {
+        Ok(self.nodes.lock().expect("lock poisoned").values().cloned().collect())
+    }
 }
 
 impl Default for GraphStore {

@@ -62,3 +62,7 @@ regex = "1"
 
 # Directories
 dirs = "6"
+
+# Web server
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
