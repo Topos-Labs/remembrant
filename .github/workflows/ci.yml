@@ -19,9 +19,9 @@ jobs:
         run: ln -s "$GITHUB_WORKSPACE/.infiniloom" "$GITHUB_WORKSPACE/../infiniloom"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace
-      - run: cargo test --workspace
-      - run: cargo clippy --workspace -- -D warnings
+      - run: cargo check --workspace --exclude remembrant-desktop
+      - run: cargo test --workspace --exclude remembrant-desktop
+      - run: cargo clippy --workspace --exclude remembrant-desktop -- -D warnings
 
   fmt:
     runs-on: ubuntu-latest

@@ -150,9 +150,18 @@ impl<'a> ProgressiveRetriever<'a> {
                 if let Some(s) = sessions.iter().find(|s| s.id == raw_id) {
                     let tool_calls = self.duck.get_tool_calls_for_session(&s.id)?;
                     let mut meta = std::collections::HashMap::new();
-                    meta.insert("messages".to_string(), s.message_count.unwrap_or(0).to_string());
-                    meta.insert("tool_calls".to_string(), s.tool_call_count.unwrap_or(0).to_string());
-                    meta.insert("tokens".to_string(), s.total_tokens.unwrap_or(0).to_string());
+                    meta.insert(
+                        "messages".to_string(),
+                        s.message_count.unwrap_or(0).to_string(),
+                    );
+                    meta.insert(
+                        "tool_calls".to_string(),
+                        s.tool_call_count.unwrap_or(0).to_string(),
+                    );
+                    meta.insert(
+                        "tokens".to_string(),
+                        s.total_tokens.unwrap_or(0).to_string(),
+                    );
                     meta.insert("files".to_string(), s.files_changed.join(", "));
 
                     let tool_summary: Vec<String> = tool_calls
@@ -230,7 +239,11 @@ impl<'a> ProgressiveRetriever<'a> {
                     if let Some(ref a) = f.source_agent {
                         meta.insert("source_agent".to_string(), a.clone());
                     }
-                    let status = if f.invalid_at.is_some() { "invalidated" } else { "active" };
+                    let status = if f.invalid_at.is_some() {
+                        "invalidated"
+                    } else {
+                        "active"
+                    };
                     meta.insert("status".to_string(), status.to_string());
 
                     // Get history for this subject
@@ -239,8 +252,11 @@ impl<'a> ProgressiveRetriever<'a> {
                         .iter()
                         .map(|h| {
                             let st = if h.invalid_at.is_some() { "X" } else { ">" };
-                            format!("{st} {} {} {} ({})",
-                                h.subject, h.predicate, h.object,
+                            format!(
+                                "{st} {} {} {} ({})",
+                                h.subject,
+                                h.predicate,
+                                h.object,
                                 h.valid_at.map(|t| t.to_string()).unwrap_or_default(),
                             )
                         })
@@ -252,8 +268,11 @@ impl<'a> ProgressiveRetriever<'a> {
                         entry_type: "fact".to_string(),
                         content: format!(
                             "Fact: {} {} {}\nConfidence: {}\nStatus: {}\n\nHistory:\n{}",
-                            f.subject, f.predicate, f.object,
-                            f.confidence, status,
+                            f.subject,
+                            f.predicate,
+                            f.object,
+                            f.confidence,
+                            status,
                             history_str.join("\n"),
                         ),
                         agent: f.source_agent.clone(),
@@ -315,7 +334,11 @@ impl<'a> ProgressiveRetriever<'a> {
             "fact" => {
                 let facts = self.duck.search_facts("")?;
                 if let Some(f) = facts.iter().find(|f| f.id == raw_id) {
-                    let status = if f.invalid_at.is_some() { " [invalidated]" } else { "" };
+                    let status = if f.invalid_at.is_some() {
+                        " [invalidated]"
+                    } else {
+                        ""
+                    };
                     Ok(Some(SummaryEntry {
                         id: id.to_string(),
                         title: format!("{} {} {}{}", f.subject, f.predicate, f.object, status),
@@ -424,15 +447,23 @@ mod tests {
     fn test_layer2_summaries() {
         let store = setup_store();
         let retriever = ProgressiveRetriever::new(&store);
-        let summaries = retriever.get_summaries(&["session:s-test", "memory:m-test"]).unwrap();
+        let summaries = retriever
+            .get_summaries(&["session:s-test", "memory:m-test"])
+            .unwrap();
 
         assert_eq!(summaries.len(), 2);
 
-        let session_summary = summaries.iter().find(|s| s.entry_type == "session").unwrap();
+        let session_summary = summaries
+            .iter()
+            .find(|s| s.entry_type == "session")
+            .unwrap();
         assert!(session_summary.summary.contains("20 msgs"));
         assert!(session_summary.summary.contains("8 tools"));
 
-        let memory_summary = summaries.iter().find(|s| s.entry_type == "insight").unwrap();
+        let memory_summary = summaries
+            .iter()
+            .find(|s| s.entry_type == "insight")
+            .unwrap();
         assert!(memory_summary.summary.contains("JWT"));
     }
 
@@ -458,7 +489,10 @@ mod tests {
 
         // Layer 1 tokens (index)
         let index = retriever.search_index("auth", 10).unwrap();
-        let index_chars: usize = index.iter().map(|e| e.title.len() + e.entry_type.len()).sum();
+        let index_chars: usize = index
+            .iter()
+            .map(|e| e.title.len() + e.entry_type.len())
+            .sum();
 
         // Layer 2 tokens (summary)
         let ids: Vec<String> = index.iter().map(|e| e.id.clone()).collect();

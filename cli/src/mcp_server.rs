@@ -418,10 +418,7 @@ impl McpServer {
     }
 
     fn handle_tools_call(&self, id: Value, params: &Value) -> JsonRpcResponse {
-        let tool_name = params
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
         let arguments = params
             .get("arguments")
             .cloned()
@@ -483,10 +480,7 @@ impl McpServer {
             .get("query")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("'query' is required"))?;
-        let limit = args
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(10) as usize;
+        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
 
         let retriever = ProgressiveRetriever::new(&self.store);
         let results = retriever.search_index(query, limit)?;
@@ -520,12 +514,10 @@ impl McpServer {
         let retriever = ProgressiveRetriever::new(&self.store);
 
         match depth {
-            "detail" => {
-                match retriever.get_detail(id)? {
-                    Some(detail) => Ok(detail.content),
-                    None => Ok(format!("Entry not found: {id}")),
-                }
-            }
+            "detail" => match retriever.get_detail(id)? {
+                Some(detail) => Ok(detail.content),
+                None => Ok(format!("Entry not found: {id}")),
+            },
             _ => {
                 // Summary level
                 let summaries = retriever.get_summaries(&[id])?;
@@ -553,11 +545,17 @@ impl McpServer {
 
         match entry_type {
             "fact" => {
-                let subject = args.get("subject").and_then(|v| v.as_str())
+                let subject = args
+                    .get("subject")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("'subject' required for facts"))?;
-                let predicate = args.get("predicate").and_then(|v| v.as_str())
+                let predicate = args
+                    .get("predicate")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("'predicate' required for facts"))?;
-                let object = args.get("object").and_then(|v| v.as_str())
+                let object = args
+                    .get("object")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("'object' required for facts"))?;
 
                 let fact = Fact {
@@ -579,24 +577,37 @@ impl McpServer {
                 Ok(format!("Fact added: {subject} {predicate} {object}"))
             }
             "note" => {
-                let text = args.get("text").and_then(|v| v.as_str())
+                let text = args
+                    .get("text")
+                    .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("'text' required for notes"))?;
 
                 let id = self.store.insert_note(text, project)?;
-                Ok(format!("Note added (id: {id}): {}", &text[..text.len().min(80)]))
+                Ok(format!(
+                    "Note added (id: {id}): {}",
+                    &text[..text.len().min(80)]
+                ))
             }
-            _ => Err(anyhow::anyhow!("Unknown type: {entry_type}. Use 'fact' or 'note'.")),
+            _ => Err(anyhow::anyhow!(
+                "Unknown type: {entry_type}. Use 'fact' or 'note'."
+            )),
         }
     }
 
     fn tool_mem_context(&self, args: &Value) -> Result<String> {
         let project = args.get("project").and_then(|v| v.as_str());
         let topic = args.get("topic").and_then(|v| v.as_str());
-        let max_tokens = args.get("max_tokens").and_then(|v| v.as_u64()).unwrap_or(1000) as usize;
-        let format = args.get("format").and_then(|v| v.as_str()).unwrap_or("text");
+        let max_tokens = args
+            .get("max_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1000) as usize;
+        let format = args
+            .get("format")
+            .and_then(|v| v.as_str())
+            .unwrap_or("text");
 
-        let assembler = remembrant_engine::ContextAssembler::new(&self.store)
-            .with_max_tokens(max_tokens);
+        let assembler =
+            remembrant_engine::ContextAssembler::new(&self.store).with_max_tokens(max_tokens);
 
         let ctx = if let Some(topic) = topic {
             assembler.topic_context(topic, project)?
@@ -615,10 +626,7 @@ impl McpServer {
             .get("query")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("'query' is required"))?;
-        let limit = args
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(20) as usize;
+        let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
         let search = HybridSearch::new(&self.store);
         let results = search.search_xpath(query, limit)?;
@@ -629,8 +637,16 @@ impl McpServer {
 
         let mut output = format!("XPath `{}` — {} results:\n\n", query, results.len());
         for r in &results {
-            let path = r.metadata.get("xpath_path").map(|s| s.as_str()).unwrap_or("");
-            let node_type = r.metadata.get("node_type").map(|s| s.as_str()).unwrap_or("");
+            let path = r
+                .metadata
+                .get("xpath_path")
+                .map(|s| s.as_str())
+                .unwrap_or("");
+            let node_type = r
+                .metadata
+                .get("node_type")
+                .map(|s| s.as_str())
+                .unwrap_or("");
             output.push_str(&format!(
                 "- [{node_type}] {} (score: {:.2})\n  path: {path}\n",
                 r.content, r.score,
@@ -680,7 +696,10 @@ impl McpServer {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("'id' is required"))?;
         let content = args.get("content").and_then(|v| v.as_str());
-        let confidence = args.get("confidence").and_then(|v| v.as_f64()).map(|f| f as f32);
+        let confidence = args
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32);
 
         if content.is_none() && confidence.is_none() {
             return Err(anyhow::anyhow!(
@@ -716,7 +735,11 @@ impl McpServer {
         let deleted = match entry_type {
             "memory" => self.store.delete_memory(id)?,
             "fact" => self.store.delete_fact(id)?,
-            _ => return Err(anyhow::anyhow!("Unknown type: {entry_type}. Use 'memory' or 'fact'.")),
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unknown type: {entry_type}. Use 'memory' or 'fact'."
+                ));
+            }
         };
 
         if deleted {

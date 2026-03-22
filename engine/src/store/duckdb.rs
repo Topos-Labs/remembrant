@@ -72,9 +72,9 @@ pub struct ToolCall {
 pub struct Fact {
     pub id: String,
     pub project_id: Option<String>,
-    pub subject: String,           // entity the fact is about (e.g., "auth module")
-    pub predicate: String,         // relationship (e.g., "uses", "depends_on", "is_located_at")
-    pub object: String,            // value (e.g., "JWT tokens", "src/auth.rs")
+    pub subject: String,   // entity the fact is about (e.g., "auth module")
+    pub predicate: String, // relationship (e.g., "uses", "depends_on", "is_located_at")
+    pub object: String,    // value (e.g., "JWT tokens", "src/auth.rs")
     pub confidence: f32,
     pub source_session_id: Option<String>,
     pub source_agent: Option<String>,
@@ -98,21 +98,21 @@ pub struct FileStat {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeSymbol {
-    pub id: String,                    // "project:file:symbol:line"
+    pub id: String, // "project:file:symbol:line"
     pub project_id: String,
     pub file_path: String,
     pub symbol_name: String,
-    pub symbol_kind: String,           // function, class, struct, method, etc.
+    pub symbol_kind: String, // function, class, struct, method, etc.
     pub signature: Option<String>,
     pub docstring: Option<String>,
     pub start_line: i32,
     pub end_line: i32,
-    pub visibility: Option<String>,    // public, private, protected
+    pub visibility: Option<String>, // public, private, protected
     pub parent_symbol: Option<String>,
     pub pagerank_score: f64,
     pub reference_count: i32,
     pub language: Option<String>,
-    pub content_hash: Option<String>,  // BLAKE3
+    pub content_hash: Option<String>, // BLAKE3
     pub indexed_at: Option<NaiveDateTime>,
 }
 
@@ -122,7 +122,7 @@ pub struct CodeDependency {
     pub project_id: String,
     pub from_symbol: String,
     pub to_symbol: String,
-    pub relationship: String,          // calls, imports, inherits, implements, references
+    pub relationship: String, // calls, imports, inherits, implements, references
     pub from_file: String,
     pub to_file: String,
 }
@@ -514,7 +514,8 @@ impl DuckStore {
         conn.execute(
             "UPDATE memories SET access_count = access_count + 1, updated_at = ? WHERE id = ?",
             params![Utc::now().naive_utc(), memory_id],
-        ).context("failed to touch memory")?;
+        )
+        .context("failed to touch memory")?;
         Ok(())
     }
 
@@ -540,7 +541,10 @@ impl DuckStore {
                 ),
                 (Some(c), None) => (
                     "content = ?, updated_at = ?".into(),
-                    vec![Box::new(c.to_string()) as Box<dyn duckdb::ToSql>, Box::new(now)],
+                    vec![
+                        Box::new(c.to_string()) as Box<dyn duckdb::ToSql>,
+                        Box::new(now),
+                    ],
                 ),
                 (None, Some(conf)) => (
                     "confidence = ?, updated_at = ?".into(),
@@ -644,7 +648,8 @@ impl DuckStore {
                 path = excluded.path,
                 updated_at = excluded.updated_at",
             params![id, name, path, Utc::now().naive_utc()],
-        ).context("failed to upsert project")?;
+        )
+        .context("failed to upsert project")?;
         Ok(())
     }
 
@@ -658,7 +663,8 @@ impl DuckStore {
                 change_frequency = file_stats.change_frequency + 1,
                 last_modified = excluded.last_modified",
             params![file_path, project_id, Utc::now().naive_utc()],
-        ).context("failed to upsert file_stat")?;
+        )
+        .context("failed to upsert file_stat")?;
         Ok(())
     }
 
@@ -674,7 +680,9 @@ impl DuckStore {
             let rows = stmt.query_map(params![proj, limit as i64], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
             })?;
-            for row in rows { result.push(row?); }
+            for row in rows {
+                result.push(row?);
+            }
         } else {
             let mut stmt = conn.prepare(
                 "SELECT file_path, change_frequency FROM file_stats ORDER BY change_frequency DESC LIMIT ?"
@@ -682,7 +690,9 @@ impl DuckStore {
             let rows = stmt.query_map(params![limit as i64], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
             })?;
-            for row in rows { result.push(row?); }
+            for row in rows {
+                result.push(row?);
+            }
         }
 
         Ok(result)
@@ -717,11 +727,7 @@ impl DuckStore {
     }
 
     /// Invalidate a fact by setting `invalid_at` and optionally linking to successor.
-    pub fn invalidate_fact(
-        &self,
-        fact_id: &str,
-        superseded_by: Option<&str>,
-    ) -> Result<bool> {
+    pub fn invalidate_fact(&self, fact_id: &str, superseded_by: Option<&str>) -> Result<bool> {
         let conn = self.conn.lock().expect("lock poisoned");
         let now = Utc::now().naive_utc();
         let affected = conn
@@ -760,11 +766,7 @@ impl DuckStore {
     }
 
     /// Get all currently valid facts (invalid_at IS NULL).
-    pub fn get_active_facts(
-        &self,
-        project: Option<&str>,
-        limit: usize,
-    ) -> Result<Vec<Fact>> {
+    pub fn get_active_facts(&self, project: Option<&str>, limit: usize) -> Result<Vec<Fact>> {
         let conn = self.conn.lock().expect("lock poisoned");
 
         let (sql, use_project) = if project.is_some() {
@@ -791,7 +793,9 @@ impl DuckStore {
             )
         };
 
-        let mut stmt = conn.prepare(sql).context("failed to prepare get_active_facts")?;
+        let mut stmt = conn
+            .prepare(sql)
+            .context("failed to prepare get_active_facts")?;
 
         let map_row = |row: &duckdb::Row| -> duckdb::Result<Fact> {
             Ok(Fact {
@@ -863,7 +867,9 @@ impl DuckStore {
         };
 
         let params_ref: Vec<&dyn duckdb::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-        let mut stmt = conn.prepare(sql).context("failed to prepare subject facts query")?;
+        let mut stmt = conn
+            .prepare(sql)
+            .context("failed to prepare subject facts query")?;
 
         let rows = stmt
             .query_map(params_ref.as_slice(), |row| {
@@ -1604,7 +1610,11 @@ impl DuckStore {
     // -----------------------------------------------------------------------
 
     /// Get all symbols for a project.
-    pub fn get_symbols_for_project(&self, project_id: &str, limit: usize) -> Result<Vec<CodeSymbol>> {
+    pub fn get_symbols_for_project(
+        &self,
+        project_id: &str,
+        limit: usize,
+    ) -> Result<Vec<CodeSymbol>> {
         let conn = self.conn.lock().expect("lock poisoned");
         let mut stmt = conn
             .prepare(
@@ -1696,7 +1706,11 @@ impl DuckStore {
     }
 
     /// Get callers of a symbol (dependencies where this symbol is the target).
-    pub fn get_callers_of(&self, symbol_name: &str, project_id: &str) -> Result<Vec<CodeDependency>> {
+    pub fn get_callers_of(
+        &self,
+        symbol_name: &str,
+        project_id: &str,
+    ) -> Result<Vec<CodeDependency>> {
         let conn = self.conn.lock().expect("lock poisoned");
         let mut stmt = conn
             .prepare(
@@ -1729,7 +1743,11 @@ impl DuckStore {
     }
 
     /// Get callees of a symbol (dependencies where this symbol is the source).
-    pub fn get_callees_of(&self, symbol_name: &str, project_id: &str) -> Result<Vec<CodeDependency>> {
+    pub fn get_callees_of(
+        &self,
+        symbol_name: &str,
+        project_id: &str,
+    ) -> Result<Vec<CodeDependency>> {
         let conn = self.conn.lock().expect("lock poisoned");
         let mut stmt = conn
             .prepare(
@@ -1762,7 +1780,11 @@ impl DuckStore {
     }
 
     /// Get all symbols in a specific file.
-    pub fn get_symbols_in_file(&self, file_path: &str, project_id: &str) -> Result<Vec<CodeSymbol>> {
+    pub fn get_symbols_in_file(
+        &self,
+        file_path: &str,
+        project_id: &str,
+    ) -> Result<Vec<CodeSymbol>> {
         let conn = self.conn.lock().expect("lock poisoned");
         let mut stmt = conn
             .prepare(
@@ -1819,7 +1841,9 @@ impl DuckStore {
     pub fn count_dependencies(&self) -> Result<usize> {
         let conn = self.conn.lock().expect("lock poisoned");
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM code_dependencies", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM code_dependencies", [], |row| {
+                row.get(0)
+            })
             .context("failed to count dependencies")?;
         Ok(count as usize)
     }
@@ -2025,7 +2049,9 @@ impl DuckStore {
             )
         };
 
-        let mut stmt = conn.prepare(sql).context("failed to prepare neighbor query")?;
+        let mut stmt = conn
+            .prepare(sql)
+            .context("failed to prepare neighbor query")?;
 
         let map_row = |row: &duckdb::Row| -> duckdb::Result<GraphNeighborRow> {
             Ok(GraphNeighborRow {
@@ -2142,9 +2168,8 @@ impl DuckStore {
                 Ok(ids)
             }
             Err(duckdb::Error::QueryReturnedNoRows) => Ok(Vec::new()),
-            Err(e) => Err(anyhow::Error::new(e).context(
-                "DuckPGQ shortest_path query failed — ensure init_graph() was called",
-            )),
+            Err(e) => Err(anyhow::Error::new(e)
+                .context("DuckPGQ shortest_path query failed — ensure init_graph() was called")),
         }
     }
 
@@ -2167,9 +2192,7 @@ impl DuckStore {
                  ORDER BY pagerank_score DESC
                  LIMIT ?",
             )
-            .context(
-                "DuckPGQ pagerank query failed — ensure init_graph() was called",
-            )?;
+            .context("DuckPGQ pagerank query failed — ensure init_graph() was called")?;
 
         let rows = stmt
             .query_map(params![limit as i64], |row| {
@@ -2208,9 +2231,9 @@ impl DuckStore {
              )"
         };
 
-        let mut stmt = conn.prepare(sql).context(
-            "DuckPGQ pattern_match query failed — ensure init_graph() was called",
-        )?;
+        let mut stmt = conn
+            .prepare(sql)
+            .context("DuckPGQ pattern_match query failed — ensure init_graph() was called")?;
 
         let map_row = |row: &duckdb::Row| -> duckdb::Result<GraphNodeRow> {
             Ok(GraphNodeRow {
@@ -2382,7 +2405,10 @@ mod tests {
             .insert_graph_node("n1", "CodeEntity", "authenticate", r#"{"lang":"rust"}"#)
             .unwrap();
 
-        let node = store.get_graph_node("n1").unwrap().expect("node should exist");
+        let node = store
+            .get_graph_node("n1")
+            .unwrap()
+            .expect("node should exist");
         assert_eq!(node.id, "n1");
         assert_eq!(node.kind, "CodeEntity");
         assert_eq!(node.name, "authenticate");
@@ -2413,8 +2439,12 @@ mod tests {
     #[test]
     fn test_graph_insert_edge_and_neighbors() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_graph_node("a", "CodeEntity", "foo", "{}").unwrap();
-        store.insert_graph_node("b", "CodeEntity", "bar", "{}").unwrap();
+        store
+            .insert_graph_node("a", "CodeEntity", "foo", "{}")
+            .unwrap();
+        store
+            .insert_graph_node("b", "CodeEntity", "bar", "{}")
+            .unwrap();
         store.insert_graph_edge("a", "b", "CALLS", "{}").unwrap();
 
         // Outgoing from a
@@ -2434,8 +2464,12 @@ mod tests {
     #[test]
     fn test_graph_neighbor_edge_kind_filter() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_graph_node("a", "CodeEntity", "foo", "{}").unwrap();
-        store.insert_graph_node("b", "CodeEntity", "bar", "{}").unwrap();
+        store
+            .insert_graph_node("a", "CodeEntity", "foo", "{}")
+            .unwrap();
+        store
+            .insert_graph_node("b", "CodeEntity", "bar", "{}")
+            .unwrap();
         store.insert_graph_node("c", "Module", "baz", "{}").unwrap();
 
         store.insert_graph_edge("a", "b", "CALLS", "{}").unwrap();
@@ -2453,8 +2487,12 @@ mod tests {
     #[test]
     fn test_graph_duplicate_edge_ignored() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_graph_node("a", "CodeEntity", "foo", "{}").unwrap();
-        store.insert_graph_node("b", "CodeEntity", "bar", "{}").unwrap();
+        store
+            .insert_graph_node("a", "CodeEntity", "foo", "{}")
+            .unwrap();
+        store
+            .insert_graph_node("b", "CodeEntity", "bar", "{}")
+            .unwrap();
 
         store.insert_graph_edge("a", "b", "CALLS", "{}").unwrap();
         store.insert_graph_edge("a", "b", "CALLS", "{}").unwrap(); // duplicate
@@ -2465,9 +2503,15 @@ mod tests {
     #[test]
     fn test_graph_delete_node_cascades_edges() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_graph_node("a", "CodeEntity", "foo", "{}").unwrap();
-        store.insert_graph_node("b", "CodeEntity", "bar", "{}").unwrap();
-        store.insert_graph_node("c", "CodeEntity", "baz", "{}").unwrap();
+        store
+            .insert_graph_node("a", "CodeEntity", "foo", "{}")
+            .unwrap();
+        store
+            .insert_graph_node("b", "CodeEntity", "bar", "{}")
+            .unwrap();
+        store
+            .insert_graph_node("c", "CodeEntity", "baz", "{}")
+            .unwrap();
 
         store.insert_graph_edge("a", "b", "CALLS", "{}").unwrap();
         store.insert_graph_edge("c", "a", "IMPORTS", "{}").unwrap();
@@ -2489,9 +2533,13 @@ mod tests {
         assert_eq!(store.count_graph_nodes().unwrap(), 0);
         assert_eq!(store.count_graph_edges().unwrap(), 0);
 
-        store.insert_graph_node("a", "Concept", "auth", "{}").unwrap();
+        store
+            .insert_graph_node("a", "Concept", "auth", "{}")
+            .unwrap();
         store.insert_graph_node("b", "Concept", "db", "{}").unwrap();
-        store.insert_graph_edge("a", "b", "RELATES_TO", "{}").unwrap();
+        store
+            .insert_graph_edge("a", "b", "RELATES_TO", "{}")
+            .unwrap();
 
         assert_eq!(store.count_graph_nodes().unwrap(), 2);
         assert_eq!(store.count_graph_edges().unwrap(), 1);
@@ -2500,9 +2548,13 @@ mod tests {
     #[test]
     fn test_graph_clear() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_graph_node("a", "Concept", "auth", "{}").unwrap();
+        store
+            .insert_graph_node("a", "Concept", "auth", "{}")
+            .unwrap();
         store.insert_graph_node("b", "Concept", "db", "{}").unwrap();
-        store.insert_graph_edge("a", "b", "RELATES_TO", "{}").unwrap();
+        store
+            .insert_graph_edge("a", "b", "RELATES_TO", "{}")
+            .unwrap();
 
         store.clear_graph().unwrap();
 
@@ -2534,8 +2586,12 @@ mod tests {
     #[test]
     fn test_insert_and_get_facts() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_fact(&make_fact("f-1", "auth", "uses", "JWT")).unwrap();
-        store.insert_fact(&make_fact("f-2", "db", "uses", "DuckDB")).unwrap();
+        store
+            .insert_fact(&make_fact("f-1", "auth", "uses", "JWT"))
+            .unwrap();
+        store
+            .insert_fact(&make_fact("f-2", "db", "uses", "DuckDB"))
+            .unwrap();
 
         let facts = store.get_active_facts(None, 100).unwrap();
         assert_eq!(facts.len(), 2);
@@ -2546,7 +2602,9 @@ mod tests {
     #[test]
     fn test_invalidate_fact() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_fact(&make_fact("f-1", "auth", "uses", "JWT")).unwrap();
+        store
+            .insert_fact(&make_fact("f-1", "auth", "uses", "JWT"))
+            .unwrap();
 
         assert!(store.invalidate_fact("f-1", Some("f-2")).unwrap());
         assert_eq!(store.count_active_facts().unwrap(), 0);
@@ -2560,10 +2618,14 @@ mod tests {
     fn test_upsert_fact_supersedes_contradicting() {
         let store = DuckStore::open_in_memory().unwrap();
         // Insert original fact: auth uses JWT
-        store.insert_fact(&make_fact("f-1", "auth", "uses", "JWT")).unwrap();
+        store
+            .insert_fact(&make_fact("f-1", "auth", "uses", "JWT"))
+            .unwrap();
 
         // Upsert contradicting fact: auth uses OAuth2
-        store.upsert_fact(&make_fact("f-2", "auth", "uses", "OAuth2")).unwrap();
+        store
+            .upsert_fact(&make_fact("f-2", "auth", "uses", "OAuth2"))
+            .unwrap();
 
         // Old fact should be invalidated, new fact should be active
         let active = store.get_active_facts(None, 100).unwrap();
@@ -2577,10 +2639,14 @@ mod tests {
     #[test]
     fn test_upsert_fact_skips_duplicate() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_fact(&make_fact("f-1", "auth", "uses", "JWT")).unwrap();
+        store
+            .insert_fact(&make_fact("f-1", "auth", "uses", "JWT"))
+            .unwrap();
 
         // Upsert same fact (same subject+predicate+object)
-        store.upsert_fact(&make_fact("f-2", "auth", "uses", "JWT")).unwrap();
+        store
+            .upsert_fact(&make_fact("f-2", "auth", "uses", "JWT"))
+            .unwrap();
 
         // Should still be 1 fact (duplicate skipped)
         assert_eq!(store.count_facts().unwrap(), 1);
@@ -2589,8 +2655,12 @@ mod tests {
     #[test]
     fn test_search_facts() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_fact(&make_fact("f-1", "auth module", "uses", "JWT tokens")).unwrap();
-        store.insert_fact(&make_fact("f-2", "db layer", "uses", "DuckDB")).unwrap();
+        store
+            .insert_fact(&make_fact("f-1", "auth module", "uses", "JWT tokens"))
+            .unwrap();
+        store
+            .insert_fact(&make_fact("f-2", "db layer", "uses", "DuckDB"))
+            .unwrap();
 
         let results = store.search_facts("auth").unwrap();
         assert_eq!(results.len(), 1);
@@ -2618,7 +2688,11 @@ mod tests {
         store.insert_memory(&mem).unwrap();
 
         // Update content
-        assert!(store.update_memory("m-upd", Some("revised content"), None).unwrap());
+        assert!(
+            store
+                .update_memory("m-upd", Some("revised content"), None)
+                .unwrap()
+        );
         let fetched = store.get_memory("m-upd").unwrap().unwrap();
         assert_eq!(fetched.content, "revised content");
         assert_eq!(fetched.confidence, 0.8); // unchanged
@@ -2640,7 +2714,9 @@ mod tests {
     #[test]
     fn test_get_and_delete_fact() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_fact(&make_fact("f-del", "auth", "uses", "JWT")).unwrap();
+        store
+            .insert_fact(&make_fact("f-del", "auth", "uses", "JWT"))
+            .unwrap();
 
         let fact = store.get_fact("f-del").unwrap().unwrap();
         assert_eq!(fact.subject, "auth");
@@ -2653,9 +2729,13 @@ mod tests {
     #[test]
     fn test_fact_history() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_fact(&make_fact("f-1", "auth", "uses", "JWT")).unwrap();
+        store
+            .insert_fact(&make_fact("f-1", "auth", "uses", "JWT"))
+            .unwrap();
         store.invalidate_fact("f-1", Some("f-2")).unwrap();
-        store.insert_fact(&make_fact("f-2", "auth", "uses", "OAuth2")).unwrap();
+        store
+            .insert_fact(&make_fact("f-2", "auth", "uses", "OAuth2"))
+            .unwrap();
 
         let history = store.get_fact_history("auth").unwrap();
         assert_eq!(history.len(), 2);

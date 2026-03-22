@@ -141,27 +141,40 @@ impl<'a> ContextAssembler<'a> {
         let now = chrono::Utc::now().naive_utc();
         let since_3d = now - chrono::Duration::days(3);
 
-        let sessions = self.store.search_sessions(None, project, Some(since_3d), 100)?;
+        let sessions = self
+            .store
+            .search_sessions(None, project, Some(since_3d), 100)?;
         let facts = self.store.get_active_facts(project, 30)?;
         let memories = self.store.get_memories(project, 20)?;
         let decisions = self.store.get_decisions(project, 10)?;
 
         // Status line
-        let agent_count = sessions.iter()
+        let agent_count = sessions
+            .iter()
             .map(|s| s.agent.as_str())
             .collect::<std::collections::HashSet<_>>()
             .len();
         let status_line = format!(
             "{} sessions by {} agent(s) in last 3 days | {} facts | {} memories",
-            sessions.len(), agent_count, facts.len(), memories.len()
+            sessions.len(),
+            agent_count,
+            facts.len(),
+            memories.len()
         );
 
         // Facts as compact triples
-        let fact_lines: Vec<String> = facts.iter()
+        let fact_lines: Vec<String> = facts
+            .iter()
             .take(self.budget_items(self.max_tokens / 4, 15))
             .map(|f| {
                 if f.confidence < 0.8 {
-                    format!("{} {} {} (conf: {:.0}%)", f.subject, f.predicate, f.object, f.confidence * 100.0)
+                    format!(
+                        "{} {} {} (conf: {:.0}%)",
+                        f.subject,
+                        f.predicate,
+                        f.object,
+                        f.confidence * 100.0
+                    )
                 } else {
                     format!("{} {} {}", f.subject, f.predicate, f.object)
                 }
@@ -169,7 +182,8 @@ impl<'a> ContextAssembler<'a> {
             .collect();
 
         // Decisions
-        let decision_lines: Vec<String> = decisions.iter()
+        let decision_lines: Vec<String> = decisions
+            .iter()
             .take(self.budget_items(self.max_tokens / 6, 8))
             .map(|d| {
                 let why = d.why.as_deref().unwrap_or("");
@@ -184,10 +198,13 @@ impl<'a> ContextAssembler<'a> {
         // Memories (sorted by confidence desc, then access_count desc)
         let mut sorted_memories = memories;
         sorted_memories.sort_by(|a, b| {
-            b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal)
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
                 .then(b.access_count.cmp(&a.access_count))
         });
-        let memory_lines: Vec<String> = sorted_memories.iter()
+        let memory_lines: Vec<String> = sorted_memories
+            .iter()
             .take(self.budget_items(self.max_tokens / 4, 10))
             .map(|m| {
                 let tag = m.memory_type.as_deref().unwrap_or("note");
@@ -196,7 +213,8 @@ impl<'a> ContextAssembler<'a> {
             .collect();
 
         // Sessions: group by agent, show most recent
-        let session_lines: Vec<String> = sessions.iter()
+        let session_lines: Vec<String> = sessions
+            .iter()
             .take(self.budget_items(self.max_tokens / 6, 8))
             .map(|s| {
                 let summary = s.summary.as_deref().unwrap_or("(no summary)");
@@ -207,9 +225,10 @@ impl<'a> ContextAssembler<'a> {
 
         // Hot files: use file_stats table if populated, else count from sessions
         let hot_files: Vec<String> = match self.store.get_hot_files(project, 8) {
-            Ok(files) if !files.is_empty() => {
-                files.iter().map(|(f, count)| format!("{f} ({count}x)")).collect()
-            }
+            Ok(files) if !files.is_empty() => files
+                .iter()
+                .map(|(f, count)| format!("{f} ({count}x)"))
+                .collect(),
             _ => {
                 let mut file_freq: HashMap<String, usize> = HashMap::new();
                 for s in &sessions {
@@ -219,11 +238,21 @@ impl<'a> ContextAssembler<'a> {
                 }
                 let mut hot: Vec<_> = file_freq.into_iter().collect();
                 hot.sort_by(|a, b| b.1.cmp(&a.1));
-                hot.iter().take(8).map(|(f, count)| format!("{f} ({count}x)")).collect()
+                hot.iter()
+                    .take(8)
+                    .map(|(f, count)| format!("{f} ({count}x)"))
+                    .collect()
             }
         };
 
-        let estimated = estimate_tokens(&status_line, &fact_lines, &decision_lines, &memory_lines, &session_lines, &hot_files);
+        let estimated = estimate_tokens(
+            &status_line,
+            &fact_lines,
+            &decision_lines,
+            &memory_lines,
+            &session_lines,
+            &hot_files,
+        );
         let (pressure, pressure_message) = compute_pressure(estimated, self.max_tokens);
 
         let ctx = AgentContext {
@@ -289,10 +318,22 @@ impl<'a> ContextAssembler<'a> {
         session_lines.truncate(5);
         decision_lines.truncate(5);
 
-        let status_line = format!("Topic context for '{}': {} facts, {} memories, {} sessions",
-            topic, fact_lines.len(), memory_lines.len(), session_lines.len());
+        let status_line = format!(
+            "Topic context for '{}': {} facts, {} memories, {} sessions",
+            topic,
+            fact_lines.len(),
+            memory_lines.len(),
+            session_lines.len()
+        );
 
-        let estimated = estimate_tokens(&status_line, &fact_lines, &decision_lines, &memory_lines, &session_lines, &[]);
+        let estimated = estimate_tokens(
+            &status_line,
+            &fact_lines,
+            &decision_lines,
+            &memory_lines,
+            &session_lines,
+            &[],
+        );
         let (pressure, pressure_message) = compute_pressure(estimated, self.max_tokens);
 
         let ctx = AgentContext {
@@ -320,7 +361,8 @@ fn truncate_str(s: &str, max_chars: usize) -> &str {
     if s.len() <= max_chars {
         s
     } else {
-        let end = s.char_indices()
+        let end = s
+            .char_indices()
             .nth(max_chars)
             .map(|(i, _)| i)
             .unwrap_or(s.len());
@@ -340,7 +382,9 @@ fn compute_pressure(estimated_tokens: usize, max_tokens: usize) -> (PressureLeve
                 "CRITICAL: Context uses {:.0}% of budget ({}/{} tokens). \
                  Switch to Index-level disclosure. Consider running `rem consolidate` \
                  to merge duplicate memories, or use `mem_delete` to remove stale entries.",
-                ratio * 100.0, estimated_tokens, max_tokens
+                ratio * 100.0,
+                estimated_tokens,
+                max_tokens
             )),
         )
     } else if ratio > 0.50 {
@@ -349,7 +393,9 @@ fn compute_pressure(estimated_tokens: usize, max_tokens: usize) -> (PressureLeve
             Some(format!(
                 "ELEVATED: Context uses {:.0}% of budget ({}/{} tokens). \
                  Consider switching from Detail to Summary disclosure level.",
-                ratio * 100.0, estimated_tokens, max_tokens
+                ratio * 100.0,
+                estimated_tokens,
+                max_tokens
             )),
         )
     } else {
@@ -379,7 +425,7 @@ fn estimate_tokens(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::duckdb::{Memory, Session, Fact};
+    use crate::store::duckdb::{Fact, Memory, Session};
     use chrono::Utc;
 
     #[test]

@@ -99,7 +99,11 @@ impl TreeNodeType {
     pub fn child_types(&self) -> &[TreeNodeType] {
         match self {
             Self::Root => &[TreeNodeType::Project],
-            Self::Project => &[TreeNodeType::Session, TreeNodeType::Memory, TreeNodeType::Fact],
+            Self::Project => &[
+                TreeNodeType::Session,
+                TreeNodeType::Memory,
+                TreeNodeType::Fact,
+            ],
             Self::Session => &[
                 TreeNodeType::Decision,
                 TreeNodeType::Memory,
@@ -183,12 +187,18 @@ impl TreeNode {
     ///
     /// Symbol nodes are always considered loaded (they are leaf nodes).
     pub fn is_loaded(&self) -> bool {
-        !self.children.is_empty() || self.node_type == TreeNodeType::Symbol || self.node_type == TreeNodeType::Fact
+        !self.children.is_empty()
+            || self.node_type == TreeNodeType::Symbol
+            || self.node_type == TreeNodeType::Fact
     }
 
     /// Count all nodes in this subtree (including self).
     pub fn subtree_size(&self) -> usize {
-        1 + self.children.iter().map(|c| c.subtree_size()).sum::<usize>()
+        1 + self
+            .children
+            .iter()
+            .map(|c| c.subtree_size())
+            .sum::<usize>()
     }
 
     /// Recursively find a node by ID within this subtree.
@@ -235,7 +245,11 @@ impl TreeSchema {
         hierarchy.insert(TreeNodeType::Root, vec![TreeNodeType::Project]);
         hierarchy.insert(
             TreeNodeType::Project,
-            vec![TreeNodeType::Session, TreeNodeType::Memory, TreeNodeType::Fact],
+            vec![
+                TreeNodeType::Session,
+                TreeNodeType::Memory,
+                TreeNodeType::Fact,
+            ],
         );
         hierarchy.insert(
             TreeNodeType::Session,
@@ -297,12 +311,9 @@ impl<'a> TreeBuilder<'a> {
 
         let project_ids = self.store.get_project_ids()?;
         for pid in project_ids {
-            let mut project = TreeNode::new(
-                format!("project:{pid}"),
-                TreeNodeType::Project,
-                pid.clone(),
-            )
-            .with_attr("project_id", &pid);
+            let mut project =
+                TreeNode::new(format!("project:{pid}"), TreeNodeType::Project, pid.clone())
+                    .with_attr("project_id", &pid);
             project.text_repr = pid;
             root.children.push(project);
         }
@@ -378,12 +389,9 @@ impl<'a> TreeBuilder<'a> {
             "project" => {
                 let project_ids = self.store.get_project_ids()?;
                 if project_ids.contains(&id.to_string()) {
-                    let mut node = TreeNode::new(
-                        node_id.to_string(),
-                        TreeNodeType::Project,
-                        id.to_string(),
-                    )
-                    .with_attr("project_id", id);
+                    let mut node =
+                        TreeNode::new(node_id.to_string(), TreeNodeType::Project, id.to_string())
+                            .with_attr("project_id", id);
                     node.text_repr = id.to_string();
                     self.load_children(&mut node)?;
                     Ok(Some(node))
@@ -459,12 +467,9 @@ impl<'a> TreeBuilder<'a> {
     fn load_root_children(&self, node: &mut TreeNode) -> Result<()> {
         let project_ids = self.store.get_project_ids()?;
         for pid in project_ids {
-            let mut project = TreeNode::new(
-                format!("project:{pid}"),
-                TreeNodeType::Project,
-                pid.clone(),
-            )
-            .with_attr("project_id", &pid);
+            let mut project =
+                TreeNode::new(format!("project:{pid}"), TreeNodeType::Project, pid.clone())
+                    .with_attr("project_id", &pid);
             project.text_repr = pid;
             node.children.push(project);
         }
@@ -483,9 +488,9 @@ impl<'a> TreeBuilder<'a> {
         }
 
         // Sessions for this project
-        let sessions =
-            self.store
-                .search_sessions(None, Some(&project_id), None, 10_000)?;
+        let sessions = self
+            .store
+            .search_sessions(None, Some(&project_id), None, 10_000)?;
         for session in &sessions {
             let session_node = self.session_to_node(session);
             node.children.push(session_node);
@@ -624,16 +629,10 @@ impl<'a> TreeBuilder<'a> {
                 .unwrap_or_else(|| format!("Session {}", session.id)),
         )
         .with_attr("session_id", &session.id)
-        .with_attr(
-            "project_id",
-            session.project_id.as_deref().unwrap_or(""),
-        )
+        .with_attr("project_id", session.project_id.as_deref().unwrap_or(""))
         .with_attr("agent", &session.agent)
         .with_attr("files_changed", &files_json)
-        .with_attr(
-            "summary",
-            session.summary.as_deref().unwrap_or(""),
-        );
+        .with_attr("summary", session.summary.as_deref().unwrap_or(""));
 
         node.text_repr = format!(
             "{} | agent: {} | files: {}",
@@ -674,10 +673,7 @@ impl<'a> TreeBuilder<'a> {
             memory.content.clone(),
         )
         .with_attr("content", &memory.content)
-        .with_attr(
-            "memory_type",
-            memory.memory_type.as_deref().unwrap_or(""),
-        );
+        .with_attr("memory_type", memory.memory_type.as_deref().unwrap_or(""));
 
         node.text_repr = format!(
             "{} | type: {}",
@@ -696,10 +692,7 @@ impl<'a> TreeBuilder<'a> {
                 .clone()
                 .unwrap_or_else(|| "(unknown tool)".to_string()),
         )
-        .with_attr(
-            "tool_name",
-            tc.tool_name.as_deref().unwrap_or(""),
-        )
+        .with_attr("tool_name", tc.tool_name.as_deref().unwrap_or(""))
         .with_attr("command", tc.command.as_deref().unwrap_or(""));
 
         node.text_repr = format!(
@@ -712,7 +705,11 @@ impl<'a> TreeBuilder<'a> {
     }
 
     fn fact_to_node(&self, fact: &crate::store::duckdb::Fact) -> TreeNode {
-        let status = if fact.invalid_at.is_some() { "invalidated" } else { "active" };
+        let status = if fact.invalid_at.is_some() {
+            "invalidated"
+        } else {
+            "active"
+        };
         let mut node = TreeNode::new(
             format!("fact:{}", fact.id),
             TreeNodeType::Fact,
@@ -888,10 +885,7 @@ mod tests {
 
     #[test]
     fn test_node_type_from_str_ci() {
-        assert_eq!(
-            TreeNodeType::from_str_ci("root"),
-            Some(TreeNodeType::Root)
-        );
+        assert_eq!(TreeNodeType::from_str_ci("root"), Some(TreeNodeType::Root));
         assert_eq!(
             TreeNodeType::from_str_ci("PROJECT"),
             Some(TreeNodeType::Project)
@@ -973,11 +967,8 @@ mod tests {
         let mut node = TreeNode::new("test:1", TreeNodeType::Session, "Test");
         assert!(!node.is_loaded());
 
-        node.children.push(TreeNode::new(
-            "child:1",
-            TreeNodeType::Decision,
-            "Child",
-        ));
+        node.children
+            .push(TreeNode::new("child:1", TreeNodeType::Decision, "Child"));
         assert!(node.is_loaded());
 
         // Symbol is always loaded (leaf)
@@ -989,16 +980,12 @@ mod tests {
     fn test_tree_node_subtree_size() {
         let mut root = TreeNode::new("root", TreeNodeType::Root, "Root");
         let mut project = TreeNode::new("p:1", TreeNodeType::Project, "P1");
-        project.children.push(TreeNode::new(
-            "s:1",
-            TreeNodeType::Session,
-            "S1",
-        ));
-        project.children.push(TreeNode::new(
-            "s:2",
-            TreeNodeType::Session,
-            "S2",
-        ));
+        project
+            .children
+            .push(TreeNode::new("s:1", TreeNodeType::Session, "S1"));
+        project
+            .children
+            .push(TreeNode::new("s:2", TreeNodeType::Session, "S2"));
         root.children.push(project);
         assert_eq!(root.subtree_size(), 4);
     }
@@ -1007,11 +994,9 @@ mod tests {
     fn test_tree_node_find_by_id() {
         let mut root = TreeNode::new("root", TreeNodeType::Root, "Root");
         let mut project = TreeNode::new("p:1", TreeNodeType::Project, "P1");
-        project.children.push(TreeNode::new(
-            "s:1",
-            TreeNodeType::Session,
-            "S1",
-        ));
+        project
+            .children
+            .push(TreeNode::new("s:1", TreeNodeType::Session, "S1"));
         root.children.push(project);
 
         assert!(root.find_by_id("s:1").is_some());
@@ -1309,10 +1294,12 @@ mod tests {
         builder.load_children(main_rs).unwrap();
 
         assert_eq!(main_rs.children.len(), 2); // sym-1, sym-2
-        assert!(main_rs
-            .children
-            .iter()
-            .all(|c| c.node_type == TreeNodeType::Symbol));
+        assert!(
+            main_rs
+                .children
+                .iter()
+                .all(|c| c.node_type == TreeNodeType::Symbol)
+        );
     }
 
     #[test]
@@ -1432,11 +1419,7 @@ mod tests {
             .iter()
             .find(|c| c.id == "session:s-1")
             .unwrap();
-        let d1 = s1
-            .children
-            .iter()
-            .find(|c| c.id == "decision:d-1")
-            .unwrap();
+        let d1 = s1.children.iter().find(|c| c.id == "decision:d-1").unwrap();
 
         assert!(d1.text_repr.contains("use DuckDB"));
         assert!(d1.text_repr.contains("embedded, fast analytics"));

@@ -141,8 +141,12 @@ pub fn classify_query(query: &str) -> QueryComplexity {
     let word_count = words.len();
 
     // Question words suggest semantic understanding needed
-    let question_words = ["what", "why", "how", "when", "where", "which", "explain", "describe"];
-    if words.first().map_or(false, |w| question_words.contains(&w.to_lowercase().as_str())) {
+    let question_words = [
+        "what", "why", "how", "when", "where", "which", "explain", "describe",
+    ];
+    if words.first().map_or(false, |w| {
+        question_words.contains(&w.to_lowercase().as_str())
+    }) {
         return QueryComplexity::Slow;
     }
 
@@ -191,14 +195,17 @@ fn merge_rrf(
             let rrf_contribution = backend_weight / (k + rank as f64 + 1.0);
 
             let entry = rrf_scores.entry(r.id.clone()).or_insert_with(|| {
-                (0.0, HybridResult {
-                    id: r.id.clone(),
-                    content: r.content.clone(),
-                    result_type: r.result_type,
-                    score: 0.0,
-                    sources: Vec::new(),
-                    metadata: r.metadata.clone(),
-                })
+                (
+                    0.0,
+                    HybridResult {
+                        id: r.id.clone(),
+                        content: r.content.clone(),
+                        result_type: r.result_type,
+                        score: 0.0,
+                        sources: Vec::new(),
+                        metadata: r.metadata.clone(),
+                    },
+                )
             });
 
             entry.0 += rrf_contribution;
@@ -210,7 +217,11 @@ fn merge_rrf(
             }
             // Merge metadata (later backends can add new keys)
             for (mk, mv) in &r.metadata {
-                entry.1.metadata.entry(mk.clone()).or_insert_with(|| mv.clone());
+                entry
+                    .1
+                    .metadata
+                    .entry(mk.clone())
+                    .or_insert_with(|| mv.clone());
             }
         }
     }
@@ -224,7 +235,11 @@ fn merge_rrf(
         })
         .collect();
 
-    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     results
 }
 
@@ -318,11 +333,7 @@ impl<'a> HybridSearch<'a> {
 
     /// Text-only search (no embeddings needed). Fast path for when LM Studio is down.
     /// Uses confidence-weighted scoring internally.
-    pub fn search_text_only(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<HybridResult>> {
+    pub fn search_text_only(&self, query: &str, limit: usize) -> Result<Vec<HybridResult>> {
         let text_results = self.search_text_ranked(query)?;
         let mut results = merge_rrf(&[(text_results, 1.0)], self.weights.rrf_k);
         self.apply_recency_boost_vec(&mut results);
@@ -342,11 +353,7 @@ impl<'a> HybridSearch<'a> {
     ///
     /// Use this when the query is a Semantic XPath expression like
     /// `//Session[node~"auth"]/Decision` or `//Fact[subject="auth module"]`.
-    pub fn search_xpath(
-        &self,
-        xpath_expr: &str,
-        limit: usize,
-    ) -> Result<Vec<HybridResult>> {
+    pub fn search_xpath(&self, xpath_expr: &str, limit: usize) -> Result<Vec<HybridResult>> {
         let parsed = xpath_query::parse(xpath_expr)
             .map_err(|e| anyhow::anyhow!("XPath parse error at {}: {}", e.position, e.message))?;
 
@@ -377,7 +384,11 @@ impl<'a> HybridSearch<'a> {
             })
             .collect();
 
-        hybrid_results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        hybrid_results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         info!(
             query = xpath_expr,
@@ -413,16 +424,15 @@ impl<'a> HybridSearch<'a> {
         let complexity = classify_query(query);
 
         let results = match complexity {
-            QueryComplexity::XPath => {
-                self.search_xpath(query.trim(), limit)?
-            }
+            QueryComplexity::XPath => self.search_xpath(query.trim(), limit)?,
             QueryComplexity::Fast => {
                 debug!(query = query, "fast path: text-only search");
                 self.search_text_only(query, limit)?
             }
             QueryComplexity::Slow => {
                 debug!(query = query, "slow path: full hybrid search");
-                self.search_auto(query, limit, lance, graph, embedder).await?
+                self.search_auto(query, limit, lance, graph, embedder)
+                    .await?
             }
         };
 
@@ -448,14 +458,19 @@ impl<'a> HybridSearch<'a> {
         }
 
         // Standard hybrid search with optional XPath boost
-        let mut results = self.search(query, limit * 2, lance, graph, embedder).await?;
+        let mut results = self
+            .search(query, limit * 2, lance, graph, embedder)
+            .await?;
 
         // Try to boost results using XPath if we can construct a meaningful query
         // For natural language queries, search for matching nodes in the tree
         if let Ok(xpath_results) = self.search_xpath_natural(query, limit) {
             for xr in xpath_results {
                 let key = format!("{}:{}", xr.result_type, xr.id);
-                if let Some(existing) = results.iter_mut().find(|r| format!("{}:{}", r.result_type, r.id) == key) {
+                if let Some(existing) = results
+                    .iter_mut()
+                    .find(|r| format!("{}:{}", r.result_type, r.id) == key)
+                {
                     existing.score += xr.score;
                     existing.sources.push("xpath_boost".to_string());
                 } else {
@@ -464,18 +479,18 @@ impl<'a> HybridSearch<'a> {
             }
         }
 
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         results.truncate(limit);
         Ok(results)
     }
 
     /// Natural language to XPath: searches tree nodes semantically.
     /// Constructs `//[node~"query"]` to find any matching nodes.
-    fn search_xpath_natural(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<HybridResult>> {
+    fn search_xpath_natural(&self, query: &str, limit: usize) -> Result<Vec<HybridResult>> {
         let escaped = query.replace('"', "'");
         let xpath_expr = format!(r#"//*[node~"{escaped}"]"#);
         self.search_xpath(&xpath_expr, limit)
@@ -560,29 +575,32 @@ impl<'a> HybridSearch<'a> {
         }
 
         // Sort by raw_score descending — this determines rank for RRF
-        results.sort_by(|a, b| b.raw_score.partial_cmp(&a.raw_score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.raw_score
+                .partial_cmp(&a.raw_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         debug!(results = results.len(), "text search layer complete");
         Ok(results)
     }
 
     // Keep the old search_text for backward compat with topic_context in context.rs
-    fn search_text(
-        &self,
-        query: &str,
-        scored: &mut HashMap<String, HybridResult>,
-    ) -> Result<()> {
+    fn search_text(&self, query: &str, scored: &mut HashMap<String, HybridResult>) -> Result<()> {
         let ranked = self.search_text_ranked(query)?;
         for r in ranked {
             let key = format!("{}:{}", r.result_type, r.id);
-            scored.insert(key, HybridResult {
-                id: r.id,
-                content: r.content,
-                result_type: r.result_type,
-                score: r.raw_score,
-                sources: r.sources,
-                metadata: r.metadata,
-            });
+            scored.insert(
+                key,
+                HybridResult {
+                    id: r.id,
+                    content: r.content,
+                    result_type: r.result_type,
+                    score: r.raw_score,
+                    sources: r.sources,
+                    metadata: r.metadata,
+                },
+            );
         }
         Ok(())
     }
@@ -641,7 +659,11 @@ impl<'a> HybridSearch<'a> {
         }
 
         // Sort by similarity descending — determines rank for RRF
-        results.sort_by(|a, b| b.raw_score.partial_cmp(&a.raw_score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.raw_score
+                .partial_cmp(&a.raw_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         debug!(results = results.len(), "vector search layer complete");
         Ok(results)
@@ -651,11 +673,7 @@ impl<'a> HybridSearch<'a> {
     // Internal: graph proximity search (returns ranked list for RRF)
     // -----------------------------------------------------------------------
 
-    fn search_graph_ranked(
-        &self,
-        query: &str,
-        graph: &GraphStore,
-    ) -> Result<Vec<RankedResult>> {
+    fn search_graph_ranked(&self, query: &str, graph: &GraphStore) -> Result<Vec<RankedResult>> {
         let mut results: Vec<RankedResult> = Vec::new();
         let query_lower = query.to_lowercase();
         let query_words: Vec<&str> = query_lower.split_whitespace().collect();
@@ -665,7 +683,10 @@ impl<'a> HybridSearch<'a> {
         if let Ok(all_nodes) = graph.all_nodes() {
             for node in &all_nodes {
                 let name_lower = node.name.to_lowercase();
-                let word_matches = query_words.iter().filter(|w| name_lower.contains(*w)).count();
+                let word_matches = query_words
+                    .iter()
+                    .filter(|w| name_lower.contains(*w))
+                    .count();
                 if word_matches == 0 {
                     continue;
                 }
@@ -678,7 +699,9 @@ impl<'a> HybridSearch<'a> {
                     content: node.name.clone(),
                     result_type: match node.kind {
                         crate::store::graph::NodeKind::Memory => ResultType::Memory,
-                        crate::store::graph::NodeKind::CodeEntity | crate::store::graph::NodeKind::Symbol | crate::store::graph::NodeKind::Module => ResultType::CodeEntity,
+                        crate::store::graph::NodeKind::CodeEntity
+                        | crate::store::graph::NodeKind::Symbol
+                        | crate::store::graph::NodeKind::Module => ResultType::CodeEntity,
                         _ => ResultType::Session,
                     },
                     raw_score: match_score,
@@ -716,7 +739,11 @@ impl<'a> HybridSearch<'a> {
             }
         }
         let mut results: Vec<RankedResult> = deduped.into_values().collect();
-        results.sort_by(|a, b| b.raw_score.partial_cmp(&a.raw_score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.raw_score
+                .partial_cmp(&a.raw_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         debug!(results = results.len(), "graph search layer complete");
         Ok(results)
@@ -734,20 +761,31 @@ impl<'a> HybridSearch<'a> {
         let now = chrono::Utc::now().naive_utc();
 
         for result in results.iter_mut() {
-            if let Some(ts_str) = result.metadata.get("started_at")
+            if let Some(ts_str) = result
+                .metadata
+                .get("started_at")
                 .or_else(|| result.metadata.get("created_at"))
                 .or_else(|| result.metadata.get("valid_at"))
             {
-                if let Ok(ts) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S%.f") {
+                if let Ok(ts) =
+                    chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S%.f")
+                {
                     let age_hours = (now - ts).num_hours().max(1) as f64;
-                    let decay = self.weights.recency_boost.powf(1.0 / (age_hours / 24.0 + 1.0).log2().max(1.0));
+                    let decay = self
+                        .weights
+                        .recency_boost
+                        .powf(1.0 / (age_hours / 24.0 + 1.0).log2().max(1.0));
                     result.score *= decay;
                 }
             }
         }
 
         // Re-sort after recency adjustment
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
     }
 
     // Keep old method for backward compatibility with context.rs search_text usage
@@ -759,13 +797,20 @@ impl<'a> HybridSearch<'a> {
         let now = chrono::Utc::now().naive_utc();
 
         for result in scored.values_mut() {
-            if let Some(ts_str) = result.metadata.get("started_at")
+            if let Some(ts_str) = result
+                .metadata
+                .get("started_at")
                 .or_else(|| result.metadata.get("created_at"))
                 .or_else(|| result.metadata.get("valid_at"))
             {
-                if let Ok(ts) = chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S%.f") {
+                if let Ok(ts) =
+                    chrono::NaiveDateTime::parse_from_str(ts_str, "%Y-%m-%d %H:%M:%S%.f")
+                {
                     let age_hours = (now - ts).num_hours().max(1) as f64;
-                    let decay = self.weights.recency_boost.powf(1.0 / (age_hours / 24.0 + 1.0).log2().max(1.0));
+                    let decay = self
+                        .weights
+                        .recency_boost
+                        .powf(1.0 / (age_hours / 24.0 + 1.0).log2().max(1.0));
                     result.score *= decay;
                 }
             }
@@ -780,7 +825,8 @@ impl<'a> HybridSearch<'a> {
 /// Detect if a query string is a Semantic XPath expression.
 pub fn is_xpath_query(query: &str) -> bool {
     let q = query.trim();
-    q.starts_with("//") || (q.starts_with('/') && q.len() > 1 && q.as_bytes()[1].is_ascii_alphabetic())
+    q.starts_with("//")
+        || (q.starts_with('/') && q.len() > 1 && q.as_bytes()[1].is_ascii_alphabetic())
 }
 
 /// Parse a node ID like "session:abc" into (ResultType, raw_id).
@@ -852,7 +898,11 @@ mod tests {
         let search = HybridSearch::new(&store);
         let results = search.search_text_only("authentication", 10).unwrap();
 
-        assert!(results.len() >= 2, "should find session and memory, got {}", results.len());
+        assert!(
+            results.len() >= 2,
+            "should find session and memory, got {}",
+            results.len()
+        );
         assert!(results.iter().any(|r| r.result_type == ResultType::Session));
         assert!(results.iter().any(|r| r.result_type == ResultType::Memory));
     }
@@ -934,8 +984,13 @@ mod tests {
         assert_eq!(results[0].result_type, ResultType::Session);
 
         // XPath with semantic predicate
-        let results = search.search_xpath(r#"//Session[node~"auth"]"#, 10).unwrap();
-        assert!(!results.is_empty(), "xpath with semantic should find auth session");
+        let results = search
+            .search_xpath(r#"//Session[node~"auth"]"#, 10)
+            .unwrap();
+        assert!(
+            !results.is_empty(),
+            "xpath with semantic should find auth session"
+        );
     }
 
     #[test]
@@ -1015,7 +1070,10 @@ mod tests {
     #[test]
     fn test_classify_query() {
         // XPath queries
-        assert_eq!(classify_query("//Session[node~\"auth\"]"), QueryComplexity::XPath);
+        assert_eq!(
+            classify_query("//Session[node~\"auth\"]"),
+            QueryComplexity::XPath
+        );
         assert_eq!(classify_query("/Session/Decision"), QueryComplexity::XPath);
 
         // Fast: short keyword queries
@@ -1031,14 +1089,26 @@ mod tests {
         assert_eq!(classify_query("ab"), QueryComplexity::Fast);
 
         // Slow: question words
-        assert_eq!(classify_query("what does the auth module do"), QueryComplexity::Slow);
-        assert_eq!(classify_query("how is JWT implemented"), QueryComplexity::Slow);
-        assert_eq!(classify_query("why did we choose DuckDB"), QueryComplexity::Slow);
+        assert_eq!(
+            classify_query("what does the auth module do"),
+            QueryComplexity::Slow
+        );
+        assert_eq!(
+            classify_query("how is JWT implemented"),
+            QueryComplexity::Slow
+        );
+        assert_eq!(
+            classify_query("why did we choose DuckDB"),
+            QueryComplexity::Slow
+        );
 
         // Slow: question mark
         assert_eq!(classify_query("auth module?"), QueryComplexity::Slow);
 
         // Slow: long queries (>3 words)
-        assert_eq!(classify_query("authentication module implementation details"), QueryComplexity::Slow);
+        assert_eq!(
+            classify_query("authentication module implementation details"),
+            QueryComplexity::Slow
+        );
     }
 }

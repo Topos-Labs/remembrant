@@ -67,9 +67,7 @@ impl MessageContent {
     fn first_text(&self) -> Option<&str> {
         match self {
             MessageContent::Text(s) => Some(s.as_str()),
-            MessageContent::Blocks(blocks) => {
-                blocks.iter().find_map(|c| c.text.as_deref())
-            }
+            MessageContent::Blocks(blocks) => blocks.iter().find_map(|c| c.text.as_deref()),
             MessageContent::Empty => None,
         }
     }
@@ -87,9 +85,10 @@ impl MessageContent {
     /// Iterate over function_call blocks (old format).
     fn function_calls(&self) -> Vec<&RawFunctionCall> {
         match self {
-            MessageContent::Blocks(blocks) => {
-                blocks.iter().filter_map(|c| c.function_call.as_ref()).collect()
-            }
+            MessageContent::Blocks(blocks) => blocks
+                .iter()
+                .filter_map(|c| c.function_call.as_ref())
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -352,7 +351,9 @@ impl GeminiIngester {
 
         // Sum token counts from messages that have them.
         let total_tokens: Option<i32> = {
-            let sum: i64 = raw.messages.iter()
+            let sum: i64 = raw
+                .messages
+                .iter()
                 .filter_map(|m| m.tokens.as_ref())
                 .map(|t| t.total)
                 .sum();
@@ -421,7 +422,9 @@ impl GeminiIngester {
                 } else {
                     Some(tc.args.to_string())
                 };
-                let timestamp = tc.timestamp.as_deref()
+                let timestamp = tc
+                    .timestamp
+                    .as_deref()
                     .and_then(parse_iso_timestamp)
                     .or(msg_timestamp);
                 let success = match tc.status.as_deref() {
@@ -704,9 +707,10 @@ mod tests {
         assert_eq!(sessions.len(), 2);
 
         // Legacy format session (s-001)
-        let legacy_path = sessions.iter().find(|p| {
-            p.to_string_lossy().contains("s001")
-        }).unwrap();
+        let legacy_path = sessions
+            .iter()
+            .find(|p| p.to_string_lossy().contains("s001"))
+            .unwrap();
         let session = ingester.parse_session(legacy_path, &project_map).unwrap();
         assert_eq!(session.id, "s-001");
         assert_eq!(session.agent, "gemini");
@@ -730,9 +734,10 @@ mod tests {
         let sessions = ingester.discover_sessions();
 
         // Modern format session (s-002)
-        let modern_path = sessions.iter().find(|p| {
-            p.to_string_lossy().contains("s002")
-        }).unwrap();
+        let modern_path = sessions
+            .iter()
+            .find(|p| p.to_string_lossy().contains("s002"))
+            .unwrap();
         let session = ingester.parse_session(modern_path, &project_map).unwrap();
         assert_eq!(session.id, "s-002");
         assert_eq!(session.agent, "gemini");
@@ -752,9 +757,10 @@ mod tests {
         let ingester = GeminiIngester::with_base_path(&base);
         let sessions = ingester.discover_sessions();
 
-        let legacy_path = sessions.iter().find(|p| {
-            p.to_string_lossy().contains("s001")
-        }).unwrap();
+        let legacy_path = sessions
+            .iter()
+            .find(|p| p.to_string_lossy().contains("s001"))
+            .unwrap();
         let calls = ingester.parse_session_tool_calls(legacy_path).unwrap();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].tool_name.as_deref(), Some("read_file"));
@@ -773,9 +779,10 @@ mod tests {
         let ingester = GeminiIngester::with_base_path(&base);
         let sessions = ingester.discover_sessions();
 
-        let modern_path = sessions.iter().find(|p| {
-            p.to_string_lossy().contains("s002")
-        }).unwrap();
+        let modern_path = sessions
+            .iter()
+            .find(|p| p.to_string_lossy().contains("s002"))
+            .unwrap();
         let calls = ingester.parse_session_tool_calls(modern_path).unwrap();
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].tool_name.as_deref(), Some("read_file"));

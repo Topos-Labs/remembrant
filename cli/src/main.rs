@@ -19,9 +19,9 @@ use remembrant_engine::embed_pipeline::EmbedPipeline;
 use remembrant_engine::embedding::{EmbedProvider, LmStudioEmbedder};
 use remembrant_engine::graph_builder::{self, GraphBackend, GraphBuilder};
 use remembrant_engine::repo_embed::RepoEmbedder;
-use remembrant_engine::store::{DuckStore, LanceStore};
 #[cfg(feature = "code-analysis")]
 use remembrant_engine::store::GraphStoreBackend;
+use remembrant_engine::store::{DuckStore, LanceStore};
 use remembrant_engine::{AppConfig, ClaudeIngester, CodexIngester, GeminiIngester, detect_agents};
 use tower_http::cors::CorsLayer;
 
@@ -840,15 +840,24 @@ fn cmd_recent(limit: usize, agent: Option<&str>, project: Option<&str>) -> Resul
     let config = AppConfig::load()?;
     let store = open_store(&config)?;
     // Fetch more than needed so post-filtering still returns enough results
-    let fetch_limit = if agent.is_some() || project.is_some() { limit * 5 } else { limit };
-    let sessions: Vec<_> = store.get_recent_sessions(fetch_limit)?
+    let fetch_limit = if agent.is_some() || project.is_some() {
+        limit * 5
+    } else {
+        limit
+    };
+    let sessions: Vec<_> = store
+        .get_recent_sessions(fetch_limit)?
         .into_iter()
         .filter(|s| {
             if let Some(a) = agent {
-                if !s.agent.eq_ignore_ascii_case(a) { return false; }
+                if !s.agent.eq_ignore_ascii_case(a) {
+                    return false;
+                }
             }
             if let Some(p) = project {
-                if s.project_id.as_deref() != Some(p) { return false; }
+                if s.project_id.as_deref() != Some(p) {
+                    return false;
+                }
             }
             true
         })
@@ -927,21 +936,27 @@ async fn cmd_search(
             search.search_text_only(query, 20)?
         };
 
-        let json_results: Vec<serde_json::Value> = results.iter().map(|r| {
-            serde_json::json!({
-                "id": r.id,
-                "type": r.result_type.to_string(),
-                "content": r.content,
-                "score": r.score,
-                "sources": r.sources,
-                "metadata": r.metadata,
+        let json_results: Vec<serde_json::Value> = results
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.id,
+                    "type": r.result_type.to_string(),
+                    "content": r.content,
+                    "score": r.score,
+                    "sources": r.sources,
+                    "metadata": r.metadata,
+                })
             })
-        }).collect();
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "query": query,
-            "count": json_results.len(),
-            "results": json_results,
-        }))?);
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "query": query,
+                "count": json_results.len(),
+                "results": json_results,
+            }))?
+        );
         return Ok(());
     }
 
@@ -961,12 +976,15 @@ async fn cmd_search(
         let embedder = LmStudioEmbedder::from_config(&config.embedding);
         match open_lance_store(&config).await {
             Ok(lance) => {
-                search.search(
-                    query, 40,
-                    Some(&lance),
-                    None, // graph boost TODO: unify GraphStore/DuckStore backends
-                    Some(&embedder),
-                ).await?
+                search
+                    .search(
+                        query,
+                        40,
+                        Some(&lance),
+                        None, // graph boost TODO: unify GraphStore/DuckStore backends
+                        Some(&embedder),
+                    )
+                    .await?
             }
             Err(e) => {
                 eprintln!("Warning: LanceDB unavailable ({e:#}). Using text-only search.");
@@ -976,31 +994,47 @@ async fn cmd_search(
     };
 
     // Post-filter by project, agent, content_type, since
-    let results: Vec<_> = results.into_iter().filter(|r| {
-        if let Some(proj) = project {
-            let rp = r.metadata.get("project").map(|s| s.as_str()).unwrap_or("");
-            if !rp.to_lowercase().contains(&proj.to_lowercase()) { return false; }
-        }
-        if let Some(a) = agent {
-            let ra = r.metadata.get("agent").map(|s| s.as_str()).unwrap_or("");
-            if !ra.eq_ignore_ascii_case(a) { return false; }
-        }
-        if let Some(ref ctype) = content_type {
-            let rt = r.metadata.get("type").map(|s| s.as_str()).unwrap_or("");
-            if !rt.to_lowercase().contains(&ctype.to_lowercase()) { return false; }
-        }
-        if let Some(since_dt) = since_dt {
-            let ts_str = r.metadata.get("started_at")
-                .or_else(|| r.metadata.get("created_at"))
-                .or_else(|| r.metadata.get("valid_at"));
-            if let Some(ts) = ts_str {
-                if let Ok(ts) = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S%.f") {
-                    if ts < since_dt { return false; }
+    let results: Vec<_> = results
+        .into_iter()
+        .filter(|r| {
+            if let Some(proj) = project {
+                let rp = r.metadata.get("project").map(|s| s.as_str()).unwrap_or("");
+                if !rp.to_lowercase().contains(&proj.to_lowercase()) {
+                    return false;
                 }
             }
-        }
-        true
-    }).take(20).collect();
+            if let Some(a) = agent {
+                let ra = r.metadata.get("agent").map(|s| s.as_str()).unwrap_or("");
+                if !ra.eq_ignore_ascii_case(a) {
+                    return false;
+                }
+            }
+            if let Some(ref ctype) = content_type {
+                let rt = r.metadata.get("type").map(|s| s.as_str()).unwrap_or("");
+                if !rt.to_lowercase().contains(&ctype.to_lowercase()) {
+                    return false;
+                }
+            }
+            if let Some(since_dt) = since_dt {
+                let ts_str = r
+                    .metadata
+                    .get("started_at")
+                    .or_else(|| r.metadata.get("created_at"))
+                    .or_else(|| r.metadata.get("valid_at"));
+                if let Some(ts) = ts_str {
+                    if let Ok(ts) =
+                        chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S%.f")
+                    {
+                        if ts < since_dt {
+                            return false;
+                        }
+                    }
+                }
+            }
+            true
+        })
+        .take(20)
+        .collect();
 
     if results.is_empty() {
         println!("No results found for: {query}");
@@ -1013,8 +1047,11 @@ async fn cmd_search(
         let sources = r.sources.join("+");
         println!(
             "[{:.3}] {} ({}) -- {}",
-            r.score, r.result_type, sources,
-            r.metadata.get("project")
+            r.score,
+            r.result_type,
+            sources,
+            r.metadata
+                .get("project")
                 .or_else(|| r.metadata.get("file_path"))
                 .map(|s| s.as_str())
                 .unwrap_or("-")
@@ -1100,49 +1137,64 @@ fn cmd_brief(project: Option<&str>, today: bool, json_output: bool) -> Result<()
     let decisions = store.get_decisions(project, 10)?;
 
     if json_output {
-        let json_sessions: Vec<serde_json::Value> = sessions.iter().map(|s| {
-            serde_json::json!({
-                "id": s.id,
-                "agent": s.agent,
-                "project": s.project_id,
-                "summary": s.summary,
-                "files_changed": s.files_changed,
-                "messages": s.message_count,
-                "tools": s.tool_call_count,
-                "duration_min": s.duration_minutes,
+        let json_sessions: Vec<serde_json::Value> = sessions
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "id": s.id,
+                    "agent": s.agent,
+                    "project": s.project_id,
+                    "summary": s.summary,
+                    "files_changed": s.files_changed,
+                    "messages": s.message_count,
+                    "tools": s.tool_call_count,
+                    "duration_min": s.duration_minutes,
+                })
             })
-        }).collect();
-        let json_facts: Vec<serde_json::Value> = facts.iter().map(|f| {
-            serde_json::json!({
-                "subject": f.subject,
-                "predicate": f.predicate,
-                "object": f.object,
-                "confidence": f.confidence,
+            .collect();
+        let json_facts: Vec<serde_json::Value> = facts
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "subject": f.subject,
+                    "predicate": f.predicate,
+                    "object": f.object,
+                    "confidence": f.confidence,
+                })
             })
-        }).collect();
-        let json_memories: Vec<serde_json::Value> = memories.iter().map(|m| {
-            serde_json::json!({
-                "id": m.id,
-                "type": m.memory_type,
-                "content": m.content,
-                "confidence": m.confidence,
+            .collect();
+        let json_memories: Vec<serde_json::Value> = memories
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "id": m.id,
+                    "type": m.memory_type,
+                    "content": m.content,
+                    "confidence": m.confidence,
+                })
             })
-        }).collect();
-        let json_decisions: Vec<serde_json::Value> = decisions.iter().map(|d| {
-            serde_json::json!({
-                "what": d.what,
-                "why": d.why,
-                "alternatives": d.alternatives,
+            .collect();
+        let json_decisions: Vec<serde_json::Value> = decisions
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "what": d.what,
+                    "why": d.why,
+                    "alternatives": d.alternatives,
+                })
             })
-        }).collect();
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "date": today_date.format("%Y-%m-%d").to_string(),
-            "project": project,
-            "sessions": json_sessions,
-            "facts": json_facts,
-            "memories": json_memories,
-            "decisions": json_decisions,
-        }))?);
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "date": today_date.format("%Y-%m-%d").to_string(),
+                "project": project,
+                "sessions": json_sessions,
+                "facts": json_facts,
+                "memories": json_memories,
+                "decisions": json_decisions,
+            }))?
+        );
         return Ok(());
     }
 
@@ -1232,8 +1284,7 @@ fn cmd_brief(project: Option<&str>, today: bool, json_output: bool) -> Result<()
 fn cmd_context_brief(project: Option<&str>, max_tokens: usize, json: bool) -> Result<()> {
     let config = AppConfig::load()?;
     let store = open_store(&config)?;
-    let assembler = remembrant_engine::ContextAssembler::new(&store)
-        .with_max_tokens(max_tokens);
+    let assembler = remembrant_engine::ContextAssembler::new(&store).with_max_tokens(max_tokens);
     let ctx = assembler.project_context(project)?;
     if json {
         println!("{}", ctx.to_json()?);
@@ -1243,11 +1294,15 @@ fn cmd_context_brief(project: Option<&str>, max_tokens: usize, json: bool) -> Re
     Ok(())
 }
 
-fn cmd_context_topic(topic: &str, project: Option<&str>, max_tokens: usize, json: bool) -> Result<()> {
+fn cmd_context_topic(
+    topic: &str,
+    project: Option<&str>,
+    max_tokens: usize,
+    json: bool,
+) -> Result<()> {
     let config = AppConfig::load()?;
     let store = open_store(&config)?;
-    let assembler = remembrant_engine::ContextAssembler::new(&store)
-        .with_max_tokens(max_tokens);
+    let assembler = remembrant_engine::ContextAssembler::new(&store).with_max_tokens(max_tokens);
     let ctx = assembler.topic_context(topic, project)?;
     if json {
         println!("{}", ctx.to_json()?);
@@ -1264,39 +1319,62 @@ fn cmd_consolidate(project: Option<&str>, threshold: f64, json: bool) -> Result<
     let (stats, scores, candidates) = remembrant_engine::consolidate(&store, project, threshold)?;
 
     if json {
-        let json_scores: Vec<serde_json::Value> = scores.iter().take(20).map(|s| {
-            serde_json::json!({
-                "memory_id": s.memory_id,
-                "score": (s.score * 1000.0).round() / 1000.0,
-                "confidence": s.components.confidence,
-                "access_freq": (s.components.access_frequency * 100.0).round() / 100.0,
-                "recency": (s.components.recency * 100.0).round() / 100.0,
+        let json_scores: Vec<serde_json::Value> = scores
+            .iter()
+            .take(20)
+            .map(|s| {
+                serde_json::json!({
+                    "memory_id": s.memory_id,
+                    "score": (s.score * 1000.0).round() / 1000.0,
+                    "confidence": s.components.confidence,
+                    "access_freq": (s.components.access_frequency * 100.0).round() / 100.0,
+                    "recency": (s.components.recency * 100.0).round() / 100.0,
+                })
             })
-        }).collect();
-        let json_candidates: Vec<serde_json::Value> = candidates.iter().take(10).map(|c| {
-            serde_json::json!({
-                "memory_a": c.memory_a,
-                "memory_b": c.memory_b,
-                "similarity": (c.similarity * 100.0).round() / 100.0,
+            .collect();
+        let json_candidates: Vec<serde_json::Value> = candidates
+            .iter()
+            .take(10)
+            .map(|c| {
+                serde_json::json!({
+                    "memory_a": c.memory_a,
+                    "memory_b": c.memory_b,
+                    "similarity": (c.similarity * 100.0).round() / 100.0,
+                })
             })
-        }).collect();
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "expired": stats.expired_count,
-            "merge_candidates": json_candidates,
-            "decay_scores": json_scores,
-        }))?);
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "expired": stats.expired_count,
+                "merge_candidates": json_candidates,
+                "decay_scores": json_scores,
+            }))?
+        );
         return Ok(());
     }
 
     println!("=== Memory Consolidation ===\n");
-    println!("Expired {} stale memories (past valid_until).", stats.expired_count);
+    println!(
+        "Expired {} stale memories (past valid_until).",
+        stats.expired_count
+    );
     println!("Scored {} memories.", stats.scored_count);
     println!();
 
     if !candidates.is_empty() {
-        println!("Merge Candidates ({} found, threshold: {:.0}%):", candidates.len(), threshold * 100.0);
+        println!(
+            "Merge Candidates ({} found, threshold: {:.0}%):",
+            candidates.len(),
+            threshold * 100.0
+        );
         for c in candidates.iter().take(10) {
-            println!("  {:.0}% similar: {} <-> {}", c.similarity * 100.0, c.memory_a, c.memory_b);
+            println!(
+                "  {:.0}% similar: {} <-> {}",
+                c.similarity * 100.0,
+                c.memory_a,
+                c.memory_b
+            );
         }
         println!();
     }
@@ -1305,7 +1383,9 @@ fn cmd_consolidate(project: Option<&str>, threshold: f64, json: bool) -> Result<
     for (i, s) in scores.iter().take(15).enumerate() {
         println!(
             "  {}. [{:.3}] {} (conf={:.0}% access={:.2} recency={:.2})",
-            i + 1, s.score, s.memory_id,
+            i + 1,
+            s.score,
+            s.memory_id,
             s.components.confidence * 100.0,
             s.components.access_frequency,
             s.components.recency,
@@ -1897,9 +1977,7 @@ async fn cmd_ingest(skip_embed: bool, skip_distill: bool) -> Result<()> {
     let total_s = all_sessions.len();
     let total_m = all_memories.len();
     let total_tc = all_tool_calls.len();
-    println!(
-        "\n  Total: {total_s} sessions, {total_tc} tool calls, {total_m} memories → DuckDB ✓"
-    );
+    println!("\n  Total: {total_s} sessions, {total_tc} tool calls, {total_m} memories → DuckDB ✓");
 
     // ── Step 2: LLM Distillation ────────────────────────────────────
     if skip_distill {
@@ -2051,14 +2129,13 @@ fn cmd_analyze(path: &str, project: Option<&str>) -> Result<()> {
         let store = open_store(&config)?;
         let repo_path = expand_tilde(path);
 
-        let project_id = project
-            .map(String::from)
-            .unwrap_or_else(|| {
-                repo_path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string()
-            });
+        let project_id = project.map(String::from).unwrap_or_else(|| {
+            repo_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string()
+        });
 
         println!("Analyzing {}...", repo_path.display());
         println!("  Project: {project_id}");
@@ -2141,7 +2218,13 @@ async fn cmd_embed(path: &str, _update: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_xpath(query: &str, depth: usize, limit: usize, show_tree: bool, json_output: bool) -> Result<()> {
+fn cmd_xpath(
+    query: &str,
+    depth: usize,
+    limit: usize,
+    show_tree: bool,
+    json_output: bool,
+) -> Result<()> {
     let config = AppConfig::load()?;
     let store = open_store(&config)?;
 
@@ -2159,20 +2242,27 @@ fn cmd_xpath(query: &str, depth: usize, limit: usize, show_tree: bool, json_outp
 
     if json_output {
         // Agent-friendly JSON output
-        let json_results: Vec<serde_json::Value> = results.iter().take(limit).map(|r| {
-            serde_json::json!({
-                "node_id": r.node_id,
-                "node_type": r.node_type,
-                "name": r.name,
-                "weight": r.weight,
-                "path": r.path,
+        let json_results: Vec<serde_json::Value> = results
+            .iter()
+            .take(limit)
+            .map(|r| {
+                serde_json::json!({
+                    "node_id": r.node_id,
+                    "node_type": r.node_type,
+                    "name": r.name,
+                    "weight": r.weight,
+                    "path": r.path,
+                })
             })
-        }).collect();
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
-            "query": query,
-            "count": results.len(),
-            "results": json_results,
-        }))?);
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "query": query,
+                "count": results.len(),
+                "results": json_results,
+            }))?
+        );
         return Ok(());
     }
 
@@ -2227,13 +2317,25 @@ async fn web_index() -> Html<&'static str> {
     Html(include_str!("web_dashboard.html"))
 }
 
-async fn web_stats(State(state): State<Arc<WebState>>) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+async fn web_stats(
+    State(state): State<Arc<WebState>>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
     let store = state.store()?;
-    let sessions = store.count_sessions().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let memories = store.count_memories().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let decisions = store.count_decisions().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let tool_calls = store.count_tool_calls().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let projects = store.get_project_ids().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let sessions = store
+        .count_sessions()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let memories = store
+        .count_memories()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let decisions = store
+        .count_decisions()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let tool_calls = store
+        .count_tool_calls()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let projects = store
+        .get_project_ids()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(axum::Json(serde_json::json!({
         "sessions": sessions,
         "memories": memories,
@@ -2243,10 +2345,16 @@ async fn web_stats(State(state): State<Arc<WebState>>) -> Result<axum::Json<serd
     })))
 }
 
-async fn web_projects(State(state): State<Arc<WebState>>) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+async fn web_projects(
+    State(state): State<Arc<WebState>>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
     let store = state.store()?;
-    let projects = store.get_project_ids().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(axum::Json(serde_json::to_value(&projects).unwrap_or_default()))
+    let projects = store
+        .get_project_ids()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(axum::Json(
+        serde_json::to_value(&projects).unwrap_or_default(),
+    ))
 }
 
 #[derive(serde::Deserialize)]
@@ -2256,16 +2364,24 @@ struct SessionsQuery {
     agent: Option<String>,
 }
 
-async fn web_sessions(State(state): State<Arc<WebState>>, Query(q): Query<SessionsQuery>) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+async fn web_sessions(
+    State(state): State<Arc<WebState>>,
+    Query(q): Query<SessionsQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
     let store = state.store()?;
     let limit = q.limit.unwrap_or(200);
     let sessions = store
         .search_sessions(q.agent.as_deref(), q.project.as_deref(), None, limit)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(axum::Json(serde_json::to_value(&sessions).unwrap_or_default()))
+    Ok(axum::Json(
+        serde_json::to_value(&sessions).unwrap_or_default(),
+    ))
 }
 
-async fn web_session_detail(State(state): State<Arc<WebState>>, AxumPath(id): AxumPath<String>) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+async fn web_session_detail(
+    State(state): State<Arc<WebState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
     let store = state.store()?;
     let sessions = store
         .search_sessions(None, None, None, 10_000)
@@ -2289,12 +2405,17 @@ struct MemoriesQuery {
     limit: Option<usize>,
 }
 
-async fn web_memories(State(state): State<Arc<WebState>>, Query(q): Query<MemoriesQuery>) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+async fn web_memories(
+    State(state): State<Arc<WebState>>,
+    Query(q): Query<MemoriesQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
     let store = state.store()?;
     let memories = store
         .get_memories(q.project.as_deref(), q.limit.unwrap_or(200))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(axum::Json(serde_json::to_value(&memories).unwrap_or_default()))
+    Ok(axum::Json(
+        serde_json::to_value(&memories).unwrap_or_default(),
+    ))
 }
 
 #[derive(serde::Deserialize)]
@@ -2302,12 +2423,17 @@ struct DecisionsQuery {
     project: Option<String>,
 }
 
-async fn web_decisions(State(state): State<Arc<WebState>>, Query(q): Query<DecisionsQuery>) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+async fn web_decisions(
+    State(state): State<Arc<WebState>>,
+    Query(q): Query<DecisionsQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
     let store = state.store()?;
     let decisions = store
         .get_decisions(q.project.as_deref(), 100)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(axum::Json(serde_json::to_value(&decisions).unwrap_or_default()))
+    Ok(axum::Json(
+        serde_json::to_value(&decisions).unwrap_or_default(),
+    ))
 }
 
 #[derive(serde::Deserialize)]
@@ -2315,20 +2441,30 @@ struct SearchQuery {
     q: String,
 }
 
-async fn web_search_sessions(State(state): State<Arc<WebState>>, Query(sq): Query<SearchQuery>) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+async fn web_search_sessions(
+    State(state): State<Arc<WebState>>,
+    Query(sq): Query<SearchQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
     let store = state.store()?;
     let sessions = store
         .search_sessions_by_summary(&sq.q)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(axum::Json(serde_json::to_value(&sessions).unwrap_or_default()))
+    Ok(axum::Json(
+        serde_json::to_value(&sessions).unwrap_or_default(),
+    ))
 }
 
-async fn web_search_memories(State(state): State<Arc<WebState>>, Query(sq): Query<SearchQuery>) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+async fn web_search_memories(
+    State(state): State<Arc<WebState>>,
+    Query(sq): Query<SearchQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
     let store = state.store()?;
     let memories = store
         .search_memories(&sq.q)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(axum::Json(serde_json::to_value(&memories).unwrap_or_default()))
+    Ok(axum::Json(
+        serde_json::to_value(&memories).unwrap_or_default(),
+    ))
 }
 
 fn cmd_mcp() -> Result<()> {
@@ -2336,7 +2472,10 @@ fn cmd_mcp() -> Result<()> {
     let db_path = expand_tilde(&config.storage.duckdb_path);
 
     if !db_path.exists() {
-        eprintln!("Database not found at {}. Run 'rem ingest' first.", db_path.display());
+        eprintln!(
+            "Database not found at {}. Run 'rem ingest' first.",
+            db_path.display()
+        );
         std::process::exit(1);
     }
 
@@ -2354,7 +2493,10 @@ async fn cmd_web(port: u16) -> Result<()> {
     // Verify DB exists
     let db_path = expand_tilde(&config.storage.duckdb_path);
     if !db_path.exists() {
-        anyhow::bail!("DuckDB not found at {}. Run `rem init` first.", db_path.display());
+        anyhow::bail!(
+            "DuckDB not found at {}. Run `rem init` first.",
+            db_path.display()
+        );
     }
 
     let state = Arc::new(WebState { config });
@@ -2376,7 +2518,8 @@ async fn cmd_web(port: u16) -> Result<()> {
     println!("Remembrant web dashboard: http://{addr}");
     println!("Press Ctrl+C to stop.\n");
 
-    let listener = tokio::net::TcpListener::bind(&addr).await
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
         .with_context(|| format!("failed to bind to {addr}"))?;
     axum::serve(listener, app).await.context("server error")?;
     Ok(())
@@ -2425,20 +2568,39 @@ async fn main() -> Result<()> {
         Commands::Find { query } => {
             cmd_find(&query)?;
         }
-        Commands::Recent { limit, agent, project } => {
+        Commands::Recent {
+            limit,
+            agent,
+            project,
+        } => {
             cmd_recent(limit, agent.as_deref(), project.as_deref())?;
         }
-        Commands::Brief { project, today, json, for_agent, max_tokens } => {
+        Commands::Brief {
+            project,
+            today,
+            json,
+            for_agent,
+            max_tokens,
+        } => {
             if for_agent {
                 cmd_context_brief(project.as_deref(), max_tokens, json)?;
             } else {
                 cmd_brief(project.as_deref(), today, json)?;
             }
         }
-        Commands::Context { topic, project, json, max_tokens } => {
+        Commands::Context {
+            topic,
+            project,
+            json,
+            max_tokens,
+        } => {
             cmd_context_topic(&topic, project.as_deref(), max_tokens, json)?;
         }
-        Commands::Consolidate { project, threshold, json } => {
+        Commands::Consolidate {
+            project,
+            threshold,
+            json,
+        } => {
             cmd_consolidate(project.as_deref(), threshold, json)?;
         }
         Commands::Patterns { topic } => {

@@ -513,10 +513,13 @@ impl ClaudeIngester {
                             let summary = if meta_path.is_file() {
                                 fs::read_to_string(&meta_path)
                                     .ok()
-                                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                                    .and_then(|s| {
+                                        serde_json::from_str::<serde_json::Value>(&s).ok()
+                                    })
                                     .and_then(|v| {
                                         let desc = v.get("description")?.as_str()?;
-                                        let agent_type = v.get("agentType")
+                                        let agent_type = v
+                                            .get("agentType")
                                             .and_then(|t| t.as_str())
                                             .unwrap_or("subagent");
                                         Some(format!("[{agent_type}] {desc}"))
@@ -557,7 +560,10 @@ impl ClaudeIngester {
                 // Resolve transcript path: subagents use "parent/agent" IDs
                 let jsonl_path = if session.id.contains('/') {
                     let parts: Vec<&str> = session.id.splitn(2, '/').collect();
-                    project_dir.join(parts[0]).join("subagents").join(format!("{}.jsonl", parts[1]))
+                    project_dir
+                        .join(parts[0])
+                        .join("subagents")
+                        .join(format!("{}.jsonl", parts[1]))
                 } else {
                     project_dir.join(format!("{}.jsonl", session.id))
                 };

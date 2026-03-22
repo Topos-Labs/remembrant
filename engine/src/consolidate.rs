@@ -54,10 +54,7 @@ pub struct ConsolidationStats {
 ///   access_boost = min(1.0, 0.3 + 0.7 * log2(access_count + 1) / 10)
 ///   recency_factor = 1 / (1 + days_since_last_access / 30)
 ///   age_penalty = min(0.5, days_since_creation / 365)
-pub fn compute_decay_scores(
-    store: &DuckStore,
-    project: Option<&str>,
-) -> Result<Vec<DecayScore>> {
+pub fn compute_decay_scores(store: &DuckStore, project: Option<&str>) -> Result<Vec<DecayScore>> {
     let memories = store.get_memories(project, 10_000)?;
     let now = Utc::now().naive_utc();
 
@@ -66,15 +63,16 @@ pub fn compute_decay_scores(
     for m in &memories {
         let confidence = m.confidence as f64;
 
-        let access_boost = (0.3 + 0.7 * ((m.access_count as f64 + 1.0).log2() / 10.0))
-            .min(1.0);
+        let access_boost = (0.3 + 0.7 * ((m.access_count as f64 + 1.0).log2() / 10.0)).min(1.0);
 
-        let days_since_update = m.updated_at
+        let days_since_update = m
+            .updated_at
             .map(|t| (now - t).num_hours().max(0) as f64 / 24.0)
             .unwrap_or(30.0);
         let recency = 1.0 / (1.0 + days_since_update / 30.0);
 
-        let days_since_creation = m.created_at
+        let days_since_creation = m
+            .created_at
             .map(|t| (now - t).num_hours().max(0) as f64 / 24.0)
             .unwrap_or(90.0);
         let age_penalty = (days_since_creation / 365.0).min(0.5);
@@ -93,7 +91,11 @@ pub fn compute_decay_scores(
         });
     }
 
-    scores.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    scores.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     Ok(scores)
 }
 
@@ -108,9 +110,11 @@ pub fn find_merge_candidates(
     let mut candidates = Vec::new();
 
     // Tokenize all memories
-    let tokenized: Vec<(String, std::collections::HashSet<String>)> = memories.iter()
+    let tokenized: Vec<(String, std::collections::HashSet<String>)> = memories
+        .iter()
         .map(|m| {
-            let tokens: std::collections::HashSet<String> = m.content
+            let tokens: std::collections::HashSet<String> = m
+                .content
                 .to_lowercase()
                 .split_whitespace()
                 .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
@@ -144,7 +148,11 @@ pub fn find_merge_candidates(
         }
     }
 
-    candidates.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+    candidates.sort_by(|a, b| {
+        b.similarity
+            .partial_cmp(&a.similarity)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     Ok(candidates)
 }
 
@@ -205,13 +213,20 @@ mod tests {
     fn test_decay_scores() {
         let store = DuckStore::open_in_memory().unwrap();
 
-        store.insert_memory(&make_memory("m-1", "auth uses JWT tokens", 0.95, 10)).unwrap();
-        store.insert_memory(&make_memory("m-2", "old forgotten note", 0.5, 0)).unwrap();
+        store
+            .insert_memory(&make_memory("m-1", "auth uses JWT tokens", 0.95, 10))
+            .unwrap();
+        store
+            .insert_memory(&make_memory("m-2", "old forgotten note", 0.5, 0))
+            .unwrap();
 
         let scores = compute_decay_scores(&store, Some("test")).unwrap();
         assert_eq!(scores.len(), 2);
         // m-1 should score higher (high confidence + high access count)
-        assert!(scores[0].memory_id == "m-1", "high confidence+access should rank first");
+        assert!(
+            scores[0].memory_id == "m-1",
+            "high confidence+access should rank first"
+        );
         assert!(scores[0].score > scores[1].score);
     }
 
@@ -219,19 +234,43 @@ mod tests {
     fn test_find_merge_candidates() {
         let store = DuckStore::open_in_memory().unwrap();
 
-        store.insert_memory(&make_memory("m-1", "authentication module uses JWT tokens for auth", 0.9, 1)).unwrap();
-        store.insert_memory(&make_memory("m-2", "authentication module uses JWT tokens for authorization", 0.8, 2)).unwrap();
-        store.insert_memory(&make_memory("m-3", "database uses PostgreSQL for storage", 0.9, 1)).unwrap();
+        store
+            .insert_memory(&make_memory(
+                "m-1",
+                "authentication module uses JWT tokens for auth",
+                0.9,
+                1,
+            ))
+            .unwrap();
+        store
+            .insert_memory(&make_memory(
+                "m-2",
+                "authentication module uses JWT tokens for authorization",
+                0.8,
+                2,
+            ))
+            .unwrap();
+        store
+            .insert_memory(&make_memory(
+                "m-3",
+                "database uses PostgreSQL for storage",
+                0.9,
+                1,
+            ))
+            .unwrap();
 
         let candidates = find_merge_candidates(&store, Some("test"), 0.5).unwrap();
         // m-1 and m-2 should be candidates (high overlap), m-3 should not match either
-        assert!(!candidates.is_empty(), "should find at least one merge candidate");
+        assert!(
+            !candidates.is_empty(),
+            "should find at least one merge candidate"
+        );
         assert!(candidates[0].similarity > 0.5);
         // Should be m-1/m-2 pair
         let pair = &candidates[0];
         assert!(
-            (pair.memory_a == "m-1" && pair.memory_b == "m-2") ||
-            (pair.memory_a == "m-2" && pair.memory_b == "m-1")
+            (pair.memory_a == "m-1" && pair.memory_b == "m-2")
+                || (pair.memory_a == "m-2" && pair.memory_b == "m-1")
         );
     }
 
@@ -259,8 +298,12 @@ mod tests {
     fn test_consolidate_full() {
         let store = DuckStore::open_in_memory().unwrap();
 
-        store.insert_memory(&make_memory("m-1", "auth uses JWT", 0.9, 5)).unwrap();
-        store.insert_memory(&make_memory("m-2", "auth uses JWT tokens", 0.8, 2)).unwrap();
+        store
+            .insert_memory(&make_memory("m-1", "auth uses JWT", 0.9, 5))
+            .unwrap();
+        store
+            .insert_memory(&make_memory("m-2", "auth uses JWT tokens", 0.8, 2))
+            .unwrap();
 
         let (stats, scores, candidates) = consolidate(&store, Some("test"), 0.5).unwrap();
         assert_eq!(stats.expired_count, 0);

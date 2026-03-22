@@ -312,7 +312,10 @@ mod tests {
         let yaml = serde_yaml::to_string(&config).expect("serialize");
         let parsed: AppConfig = serde_yaml::from_str(&yaml).expect("deserialize");
 
-        assert_eq!(parsed.embedding.model, "text-embedding-nomic-embed-text-v1.5@q8_0");
+        assert_eq!(
+            parsed.embedding.model,
+            "text-embedding-nomic-embed-text-v1.5@q8_0"
+        );
         assert_eq!(parsed.embedding.batch_size, 100);
         assert_eq!(parsed.embedding.dimensions, 768);
         assert_eq!(parsed.distillation.level, DistillationLevel::Balanced);

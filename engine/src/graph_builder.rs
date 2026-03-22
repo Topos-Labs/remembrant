@@ -382,12 +382,8 @@ impl<B: GraphBackend> GraphBuilder<B> {
         if let Some(ref project_id) = session.project_id {
             let proj_node_id = format!("project:{project_id}");
             self.ensure_project_node(&proj_node_id, project_id)?;
-            self.backend.add_edge(
-                &node_id,
-                &proj_node_id,
-                EdgeKind::About.name(),
-                "{}",
-            )?;
+            self.backend
+                .add_edge(&node_id, &proj_node_id, EdgeKind::About.name(), "{}")?;
         }
 
         debug!("Added session node: {}", node_id);
@@ -438,12 +434,8 @@ impl<B: GraphBackend> GraphBuilder<B> {
         if let Some(ref project_id) = memory.project_id {
             let proj_node_id = format!("project:{project_id}");
             self.ensure_project_node(&proj_node_id, project_id)?;
-            self.backend.add_edge(
-                &node_id,
-                &proj_node_id,
-                EdgeKind::About.name(),
-                "{}",
-            )?;
+            self.backend
+                .add_edge(&node_id, &proj_node_id, EdgeKind::About.name(), "{}")?;
         }
 
         debug!("Added memory node: {}", node_id);
@@ -491,12 +483,8 @@ impl<B: GraphBackend> GraphBuilder<B> {
         if let Some(ref project_id) = decision.project_id {
             let proj_node_id = format!("project:{project_id}");
             self.ensure_project_node(&proj_node_id, project_id)?;
-            self.backend.add_edge(
-                &node_id,
-                &proj_node_id,
-                EdgeKind::About.name(),
-                "{}",
-            )?;
+            self.backend
+                .add_edge(&node_id, &proj_node_id, EdgeKind::About.name(), "{}")?;
         }
 
         debug!("Added decision node: {}", node_id);
@@ -568,12 +556,8 @@ impl<B: GraphBackend> GraphBuilder<B> {
                         (b.clone(), a.clone())
                     };
                     if linked.insert(key) {
-                        self.backend.add_edge(
-                            &a,
-                            &b,
-                            EdgeKind::RelatesTo.name(),
-                            "{}",
-                        )?;
+                        self.backend
+                            .add_edge(&a, &b, EdgeKind::RelatesTo.name(), "{}")?;
                     }
                 }
             }
@@ -826,10 +810,7 @@ pub fn format_graph_tree(_query: &str, node_name: &str, neighbors: &[DepthNeighb
         } else {
             "\u{251c}\u{2500}\u{2500} "
         };
-        out.push_str(&format!(
-            "{prefix}[{}] {}\n",
-            d1.edge_kind, d1.name
-        ));
+        out.push_str(&format!("{prefix}[{}] {}\n", d1.edge_kind, d1.name));
 
         // Find depth-2 neighbors that came via this node
         let children: Vec<_> = neighbors
@@ -837,11 +818,7 @@ pub fn format_graph_tree(_query: &str, node_name: &str, neighbors: &[DepthNeighb
             .filter(|n| n.depth == 2 && n.via_node_id.as_deref() == Some(&d1.id))
             .collect();
 
-        let child_prefix = if is_last_d1 {
-            "    "
-        } else {
-            "\u{2502}   "
-        };
+        let child_prefix = if is_last_d1 { "    " } else { "\u{2502}   " };
         for (j, d2) in children.iter().enumerate() {
             let is_last_d2 = j == children.len() - 1;
             let child_branch = if is_last_d2 {
@@ -980,12 +957,19 @@ mod tests {
     }
 
     /// Helper to call GraphBackend::get_node unambiguously (avoids clash with GraphStoreBackend).
-    fn backend_get_node(b: &impl GraphBackend, id: &str) -> Option<(String, String, String, String)> {
+    fn backend_get_node(
+        b: &impl GraphBackend,
+        id: &str,
+    ) -> Option<(String, String, String, String)> {
         GraphBackend::get_node(b, id).unwrap()
     }
 
     /// Helper to call GraphBackend::query_neighbors unambiguously.
-    fn backend_query_neighbors(b: &impl GraphBackend, id: &str, edge_kind: Option<&str>) -> Vec<NeighborInfo> {
+    fn backend_query_neighbors(
+        b: &impl GraphBackend,
+        id: &str,
+        edge_kind: Option<&str>,
+    ) -> Vec<NeighborInfo> {
         GraphBackend::query_neighbors(b, id, edge_kind).unwrap()
     }
 

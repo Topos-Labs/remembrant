@@ -1,18 +1,18 @@
 //! Bridge between Infiniloom's code analysis and Remembrant's storage.
 //! Gated behind the `code-analysis` feature flag.
 
+use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use anyhow::{Context, Result};
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 use crate::store::duckdb::DuckStore;
-use crate::store::graph::{GraphNode, GraphEdge, NodeKind, EdgeKind, GraphStoreBackend};
+use crate::store::graph::{EdgeKind, GraphEdge, GraphNode, GraphStoreBackend, NodeKind};
 
 // Import Infiniloom types
 use infiniloom_engine::index::builder::IndexBuilder;
-use infiniloom_engine::index::types::{SymbolIndex, DepGraph, IndexSymbol};
+use infiniloom_engine::index::types::{DepGraph, IndexSymbol, SymbolIndex};
 
 // Re-export for convenience
 pub use infiniloom_engine::index::types::Language;
@@ -99,7 +99,11 @@ impl CodeAnalyzer {
             .build()
             .context("Failed to build Infiniloom index")?;
 
-        info!("Index built: {} files, {} symbols", index.files.len(), index.symbols.len());
+        info!(
+            "Index built: {} files, {} symbols",
+            index.files.len(),
+            index.symbols.len()
+        );
 
         // Step 3: Convert and store symbols in DuckDB
         debug!("Storing symbols in DuckDB...");
@@ -113,11 +117,20 @@ impl CodeAnalyzer {
         debug!("Populating graph store...");
         let (nodes_added, edges_added) = self.populate_graph(&index, &dep_graph, graph_store)?;
 
-        info!("Graph populated: {} nodes, {} edges", nodes_added, edges_added);
+        info!(
+            "Graph populated: {} nodes, {} edges",
+            nodes_added, edges_added
+        );
 
         // Step 6: Record analysis run
         let duration_ms = start.elapsed().as_millis() as u64;
-        self.record_analysis_run(store, index.files.len(), symbols_stored, deps_stored, duration_ms)?;
+        self.record_analysis_run(
+            store,
+            index.files.len(),
+            symbols_stored,
+            deps_stored,
+            duration_ms,
+        )?;
 
         Ok(AnalysisResult {
             files_analyzed: index.files.len(),
@@ -139,10 +152,12 @@ impl CodeAnalyzer {
         let mut count = 0;
 
         for symbol in &index.symbols {
-            let file = index.get_file_by_id(symbol.file_id.as_u32())
+            let file = index
+                .get_file_by_id(symbol.file_id.as_u32())
                 .context("Symbol references non-existent file")?;
 
-            let _code_symbol = self.convert_symbol(&self.project_id, &file.path, symbol, Some(file.language));
+            let _code_symbol =
+                self.convert_symbol(&self.project_id, &file.path, symbol, Some(file.language));
 
             // Store in DuckDB (when tables are added by other agent)
             // For now, we just count
@@ -153,15 +168,19 @@ impl CodeAnalyzer {
     }
 
     /// Convert Infiniloom dependencies to Remembrant CodeDependency and store
-    fn store_dependencies(&self, _store: &DuckStore, index: &SymbolIndex, dep_graph: &DepGraph) -> Result<usize> {
+    fn store_dependencies(
+        &self,
+        _store: &DuckStore,
+        index: &SymbolIndex,
+        dep_graph: &DepGraph,
+    ) -> Result<usize> {
         let mut count = 0;
 
         // Store function call edges
         for (caller_id, callee_id) in &dep_graph.calls {
-            if let (Some(caller), Some(callee)) = (
-                index.get_symbol(*caller_id),
-                index.get_symbol(*callee_id)
-            ) {
+            if let (Some(caller), Some(callee)) =
+                (index.get_symbol(*caller_id), index.get_symbol(*callee_id))
+            {
                 let _dep = CodeDependency {
                     id: format!("{}:{}:{}", self.project_id, caller_id, callee_id),
                     project_id: self.project_id.clone(),
@@ -192,7 +211,10 @@ impl CodeAnalyzer {
         language: Option<Language>,
     ) -> CodeSymbol {
         CodeSymbol {
-            id: format!("symbol:{}:{}:{}:{}", project_id, file_path, symbol.name, symbol.span.start_line),
+            id: format!(
+                "symbol:{}:{}:{}:{}",
+                project_id, file_path, symbol.name, symbol.span.start_line
+            ),
             project_id: project_id.to_string(),
             file_path: file_path.to_string(),
             name: symbol.name.clone(),
@@ -218,18 +240,24 @@ impl CodeAnalyzer {
 
         // Create Symbol nodes for each symbol
         for symbol in &index.symbols {
-            let file = index.get_file_by_id(symbol.file_id.as_u32())
+            let file = index
+                .get_file_by_id(symbol.file_id.as_u32())
                 .context("Symbol references non-existent file")?;
 
-            let node_id = format!("symbol:{}:{}:{}:{}",
-                self.project_id, file.path, symbol.name, symbol.span.start_line);
+            let node_id = format!(
+                "symbol:{}:{}:{}:{}",
+                self.project_id, file.path, symbol.name, symbol.span.start_line
+            );
 
             let mut properties = HashMap::new();
             properties.insert("file_path".to_string(), file.path.clone());
             properties.insert("kind".to_string(), symbol.kind.name().to_string());
             properties.insert("start_line".to_string(), symbol.span.start_line.to_string());
             properties.insert("end_line".to_string(), symbol.span.end_line.to_string());
-            properties.insert("visibility".to_string(), format!("{:?}", symbol.visibility).to_lowercase());
+            properties.insert(
+                "visibility".to_string(),
+                format!("{:?}", symbol.visibility).to_lowercase(),
+            );
 
             if let Some(sig) = &symbol.signature {
                 properties.insert("signature".to_string(), sig.clone());
@@ -269,8 +297,10 @@ impl CodeAnalyzer {
             // Create Defines edges from file to symbols
             for symbol_idx in file.symbols.clone() {
                 if let Some(symbol) = index.get_symbol(symbol_idx) {
-                    let symbol_id = format!("symbol:{}:{}:{}:{}",
-                        self.project_id, file.path, symbol.name, symbol.span.start_line);
+                    let symbol_id = format!(
+                        "symbol:{}:{}:{}:{}",
+                        self.project_id, file.path, symbol.name, symbol.span.start_line
+                    );
 
                     let edge = GraphEdge {
                         from_id: node_id.clone(),
@@ -287,19 +317,24 @@ impl CodeAnalyzer {
 
         // Create Calls edges between symbols
         for (caller_id, callee_id) in &dep_graph.calls {
-            if let (Some(caller), Some(callee)) = (
-                index.get_symbol(*caller_id),
-                index.get_symbol(*callee_id)
-            ) {
-                let caller_file = index.get_file_by_id(caller.file_id.as_u32())
+            if let (Some(caller), Some(callee)) =
+                (index.get_symbol(*caller_id), index.get_symbol(*callee_id))
+            {
+                let caller_file = index
+                    .get_file_by_id(caller.file_id.as_u32())
                     .context("Caller symbol references non-existent file")?;
-                let callee_file = index.get_file_by_id(callee.file_id.as_u32())
+                let callee_file = index
+                    .get_file_by_id(callee.file_id.as_u32())
                     .context("Callee symbol references non-existent file")?;
 
-                let caller_node_id = format!("symbol:{}:{}:{}:{}",
-                    self.project_id, caller_file.path, caller.name, caller.span.start_line);
-                let callee_node_id = format!("symbol:{}:{}:{}:{}",
-                    self.project_id, callee_file.path, callee.name, callee.span.start_line);
+                let caller_node_id = format!(
+                    "symbol:{}:{}:{}:{}",
+                    self.project_id, caller_file.path, caller.name, caller.span.start_line
+                );
+                let callee_node_id = format!(
+                    "symbol:{}:{}:{}:{}",
+                    self.project_id, callee_file.path, callee.name, callee.span.start_line
+                );
 
                 let edge = GraphEdge {
                     from_id: caller_node_id,
@@ -317,7 +352,7 @@ impl CodeAnalyzer {
         for (from_file_id, to_file_id) in &dep_graph.file_imports {
             if let (Some(from_file), Some(to_file)) = (
                 index.get_file_by_id(*from_file_id),
-                index.get_file_by_id(*to_file_id)
+                index.get_file_by_id(*to_file_id),
             ) {
                 let from_node_id = format!("file:{}", from_file.path);
                 let to_node_id = format!("file:{}", to_file.path);
@@ -369,7 +404,9 @@ mod tests {
 
     #[test]
     fn test_convert_symbol() {
-        use infiniloom_engine::index::types::{IndexSymbol, IndexSymbolKind, SymbolId, FileId, Span, Visibility};
+        use infiniloom_engine::index::types::{
+            FileId, IndexSymbol, IndexSymbolKind, Span, SymbolId, Visibility,
+        };
 
         let analyzer = CodeAnalyzer::new("test-project", "/tmp/test");
 
@@ -385,12 +422,8 @@ mod tests {
             docstring: None,
         };
 
-        let code_symbol = analyzer.convert_symbol(
-            "test-project",
-            "src/main.rs",
-            &symbol,
-            Some(Language::Rust)
-        );
+        let code_symbol =
+            analyzer.convert_symbol("test-project", "src/main.rs", &symbol, Some(Language::Rust));
 
         assert_eq!(code_symbol.name, "test_function");
         assert_eq!(code_symbol.kind, "function");

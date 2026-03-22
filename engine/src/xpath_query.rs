@@ -95,7 +95,11 @@ pub struct ParseError {
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "parse error at position {}: {}", self.position, self.message)
+        write!(
+            f,
+            "parse error at position {}: {}",
+            self.position, self.message
+        )
     }
 }
 
@@ -197,7 +201,10 @@ impl<'a> Parser<'a> {
             return Ok(NodeSelect::Wildcard);
         }
         let start = self.pos;
-        while self.peek().map_or(false, |c| c.is_alphanumeric() || c == '_') {
+        while self
+            .peek()
+            .map_or(false, |c| c.is_alphanumeric() || c == '_')
+        {
             self.advance(1);
         }
         let name = &self.input[start..self.pos];
@@ -272,7 +279,10 @@ impl<'a> Parser<'a> {
         }
 
         // Positional / range: starts with digit or '-'
-        if self.peek().map_or(false, |c| c.is_ascii_digit() || c == '-') {
+        if self
+            .peek()
+            .map_or(false, |c| c.is_ascii_digit() || c == '-')
+        {
             return self.parse_positional_or_range();
         }
 
@@ -356,7 +366,8 @@ impl<'a> Parser<'a> {
             self.advance(1);
         }
         let s = &self.input[start..self.pos];
-        s.parse::<i32>().map_err(|_| self.err(format!("invalid integer: '{}'", s)))
+        s.parse::<i32>()
+            .map_err(|_| self.err(format!("invalid integer: '{}'", s)))
     }
 
     fn parse_attr_or_comparison(&mut self) -> Result<Predicate, ParseError> {
@@ -417,7 +428,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_quoted_string(&mut self) -> Result<String, ParseError> {
-        let quote = self.peek().ok_or_else(|| self.err("expected quoted string"))?;
+        let quote = self
+            .peek()
+            .ok_or_else(|| self.err("expected quoted string"))?;
         if quote != '"' && quote != '\'' {
             return Err(self.err("expected '\"' or '\\''"));
         }
@@ -453,7 +466,10 @@ pub fn parse(input: &str) -> Result<XPathQuery, ParseError> {
     let query = parser.parse_query()?;
     parser.skip_ws();
     if !parser.remaining().is_empty() {
-        return Err(parser.err(format!("unexpected trailing input: '{}'", parser.remaining())));
+        return Err(parser.err(format!(
+            "unexpected trailing input: '{}'",
+            parser.remaining()
+        )));
     }
     Ok(query)
 }
@@ -483,11 +499,8 @@ pub fn evaluate(
     semantic_scorer: &dyn Fn(&str, &str) -> f64,
 ) -> Vec<WeightedNode> {
     // Start with the root weighted 1.0.
-    let mut working_set: Vec<(Vec<String>, &TreeNode, f64)> = vec![(
-        vec![root.id.clone()],
-        root,
-        1.0,
-    )];
+    let mut working_set: Vec<(Vec<String>, &TreeNode, f64)> =
+        vec![(vec![root.id.clone()], root, 1.0)];
 
     for step in &query.steps {
         let mut next_set: Vec<(Vec<String>, &TreeNode, f64)> = Vec::new();
@@ -531,7 +544,11 @@ pub fn evaluate(
             path,
         })
         .collect();
-    results.sort_by(|a, b| b.weight.partial_cmp(&a.weight).unwrap_or(std::cmp::Ordering::Equal));
+    results.sort_by(|a, b| {
+        b.weight
+            .partial_cmp(&a.weight)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     results
 }
 
@@ -600,20 +617,18 @@ fn apply_predicate<'a>(
                 vec![]
             }
         }
-        Predicate::Semantic(query_text) => {
-            set.into_iter()
-                .map(|(p, n, w)| {
-                    let score = scorer(&n.text_repr, query_text);
-                    (p, n, w * score)
-                })
-                .filter(|(_, _, w)| *w > 0.0)
-                .collect()
-        }
-        Predicate::AttrEquals(key, value) => {
-            set.into_iter()
-                .filter(|(_, n, _)| n.attributes.get(key.as_str()).map_or(false, |v| v == value))
-                .collect()
-        }
+        Predicate::Semantic(query_text) => set
+            .into_iter()
+            .map(|(p, n, w)| {
+                let score = scorer(&n.text_repr, query_text);
+                (p, n, w * score)
+            })
+            .filter(|(_, _, w)| *w > 0.0)
+            .collect(),
+        Predicate::AttrEquals(key, value) => set
+            .into_iter()
+            .filter(|(_, n, _)| n.attributes.get(key.as_str()).map_or(false, |v| v == value))
+            .collect(),
         Predicate::Comparison(key, op, value) => {
             let target: f64 = value.parse().unwrap_or(f64::NAN);
             set.into_iter()
@@ -678,10 +693,11 @@ fn apply_predicate<'a>(
             map.into_values().collect()
         }
         Predicate::Not(inner) => {
-            let matched_ids: std::collections::HashSet<String> = apply_predicate(inner, set.clone(), scorer)
-                .iter()
-                .map(|(_, n, _)| n.id.clone())
-                .collect();
+            let matched_ids: std::collections::HashSet<String> =
+                apply_predicate(inner, set.clone(), scorer)
+                    .iter()
+                    .map(|(_, n, _)| n.id.clone())
+                    .collect();
             set.into_iter()
                 .filter(|(_, n, _)| !matched_ids.contains(&n.id))
                 .collect()
@@ -803,8 +819,8 @@ mod tests {
             n
         };
 
-        let mut s1 = TreeNode::new("s1", TreeNodeType::Session, "auth-session")
-            .with_attr("agent", "claude");
+        let mut s1 =
+            TreeNode::new("s1", TreeNodeType::Session, "auth-session").with_attr("agent", "claude");
         s1.text_repr = "Authentication and login session".into();
         s1.children = vec![d1, tc1, tc2];
 
@@ -829,13 +845,17 @@ mod tests {
         assert_eq!(q.steps.len(), 1);
         assert_eq!(q.steps[0].axis, Axis::Descendant);
         assert_eq!(q.steps[0].node_select, NodeSelect::Type("Session".into()));
-        assert!(matches!(&q.steps[0].predicates[0], Predicate::Semantic(s) if s == "authentication"));
+        assert!(
+            matches!(&q.steps[0].predicates[0], Predicate::Semantic(s) if s == "authentication")
+        );
     }
 
     #[test]
     fn parse_unicode_approx() {
         let q = parse("//Session[node\u{2248}\"authentication\"]").unwrap();
-        assert!(matches!(&q.steps[0].predicates[0], Predicate::Semantic(s) if s == "authentication"));
+        assert!(
+            matches!(&q.steps[0].predicates[0], Predicate::Semantic(s) if s == "authentication")
+        );
     }
 
     #[test]
@@ -843,7 +863,9 @@ mod tests {
         let q = parse(r#"//Session[agent="claude"]/Decision"#).unwrap();
         assert_eq!(q.steps.len(), 2);
         assert_eq!(q.steps[0].axis, Axis::Descendant);
-        assert!(matches!(&q.steps[0].predicates[0], Predicate::AttrEquals(k, v) if k == "agent" && v == "claude"));
+        assert!(
+            matches!(&q.steps[0].predicates[0], Predicate::AttrEquals(k, v) if k == "agent" && v == "claude")
+        );
         assert_eq!(q.steps[1].axis, Axis::Child);
         assert_eq!(q.steps[1].node_select, NodeSelect::Type("Decision".into()));
     }
@@ -901,7 +923,9 @@ mod tests {
         match &q.steps[0].predicates[0] {
             Predicate::And(a, b) => {
                 assert!(matches!(a.as_ref(), Predicate::Semantic(s) if s == "refactor"));
-                assert!(matches!(b.as_ref(), Predicate::AttrEquals(k, v) if k == "agent" && v == "claude"));
+                assert!(
+                    matches!(b.as_ref(), Predicate::AttrEquals(k, v) if k == "agent" && v == "claude")
+                );
             }
             other => panic!("expected And, got: {:?}", other),
         }

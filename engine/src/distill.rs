@@ -765,8 +765,8 @@ impl Distiller {
         }
 
         // Extract "X uses Y" patterns
-        let uses_re = Regex::new(r"(?i)(?:using|uses|use)\s+([a-zA-Z_][a-zA-Z0-9_.-]+)")
-            .expect("uses regex");
+        let uses_re =
+            Regex::new(r"(?i)(?:using|uses|use)\s+([a-zA-Z_][a-zA-Z0-9_.-]+)").expect("uses regex");
         for cap in uses_re.captures_iter(text) {
             let obj = cap[1].to_string();
             let key = format!("project:uses:{obj}");
@@ -781,8 +781,8 @@ impl Distiller {
         }
 
         // Extract "X depends on Y" patterns
-        let depends_re = Regex::new(r"(?i)depends?\s+on\s+([a-zA-Z_][a-zA-Z0-9_.-]+)")
-            .expect("depends regex");
+        let depends_re =
+            Regex::new(r"(?i)depends?\s+on\s+([a-zA-Z_][a-zA-Z0-9_.-]+)").expect("depends regex");
         for cap in depends_re.captures_iter(text) {
             let obj = cap[1].to_string();
             let key = format!("project:depends_on:{obj}");

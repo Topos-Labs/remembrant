@@ -236,11 +236,7 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
         norm_b += y * y;
     }
     let denom = norm_a.sqrt() * norm_b.sqrt();
-    if denom < 1e-12 {
-        0.0
-    } else {
-        dot / denom
-    }
+    if denom < 1e-12 { 0.0 } else { dot / denom }
 }
 
 /// Recursively collect all semantic query strings from a list of predicates.
@@ -348,9 +344,8 @@ mod tests {
 
     #[test]
     fn test_collect_semantic_strings_aggregate() {
-        let query =
-            crate::xpath_query::parse(r#"//Session[avg(/ToolCall[node~"auth"])]/Decision"#)
-                .unwrap();
+        let query = crate::xpath_query::parse(r#"//Session[avg(/ToolCall[node~"auth"])]/Decision"#)
+            .unwrap();
         let mut strings = Vec::new();
         for step in &query.steps {
             collect_semantic_strings(&step.predicates, &mut strings);
@@ -360,8 +355,7 @@ mod tests {
 
     #[test]
     fn test_collect_semantic_strings_and_or() {
-        let query =
-            crate::xpath_query::parse(r#"//Session[node~"auth" or node~"login"]"#).unwrap();
+        let query = crate::xpath_query::parse(r#"//Session[node~"auth" or node~"login"]"#).unwrap();
         let mut strings = Vec::new();
         for step in &query.steps {
             collect_semantic_strings(&step.predicates, &mut strings);
@@ -403,8 +397,12 @@ mod tests {
     fn test_semantic_scorer_with_cached_embeddings() {
         let mut scorer = SemanticScorer::new();
         // Manually insert embeddings to test cosine path
-        scorer.cache.insert("auth login".to_string(), vec![1.0, 0.0, 0.0]);
-        scorer.cache.insert("authentication session".to_string(), vec![0.9, 0.1, 0.0]);
+        scorer
+            .cache
+            .insert("auth login".to_string(), vec![1.0, 0.0, 0.0]);
+        scorer
+            .cache
+            .insert("authentication session".to_string(), vec![0.9, 0.1, 0.0]);
         let score = scorer.score("authentication session", "auth login");
         // Should use cosine similarity, not keyword scorer
         assert!(score > 0.9, "cosine similarity should be high, got {score}");
