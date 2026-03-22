@@ -1061,4 +1061,63 @@ mod tests {
             QueryComplexity::Slow
         );
     }
+
+    #[test]
+    fn test_classify_query_edge_cases() {
+        // Whitespace-only → Fast
+        assert_eq!(classify_query("   "), QueryComplexity::Fast);
+
+        // Single character → Fast
+        assert_eq!(classify_query("a"), QueryComplexity::Fast);
+
+        // XPath with @attr syntax
+        assert_eq!(
+            classify_query(r#"//Session[@agent="claude"]"#),
+            QueryComplexity::XPath
+        );
+
+        // XPath double-slash only
+        assert_eq!(classify_query("//Memory"), QueryComplexity::XPath);
+
+        // Question words with mixed case
+        assert_eq!(
+            classify_query("What is the auth flow"),
+            QueryComplexity::Slow
+        );
+        assert_eq!(
+            classify_query("Explain the architecture"),
+            QueryComplexity::Slow
+        );
+        assert_eq!(
+            classify_query("Describe the data model"),
+            QueryComplexity::Slow
+        );
+        assert_eq!(
+            classify_query("Which database is used"),
+            QueryComplexity::Slow
+        );
+        assert_eq!(
+            classify_query("Where is auth configured"),
+            QueryComplexity::Slow
+        );
+        assert_eq!(
+            classify_query("When was this changed"),
+            QueryComplexity::Slow
+        );
+
+        // Exactly 3 words → Fast (threshold is >3)
+        assert_eq!(classify_query("auth module JWT"), QueryComplexity::Fast);
+
+        // 4 words → Slow
+        assert_eq!(
+            classify_query("auth module JWT tokens"),
+            QueryComplexity::Slow
+        );
+
+        // Quoted multi-word → Fast (exact match)
+        assert_eq!(
+            classify_query("\"authentication module implementation\""),
+            QueryComplexity::Fast
+        );
+    }
 }

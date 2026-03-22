@@ -2745,4 +2745,163 @@ mod tests {
         assert_eq!(history[1].object, "OAuth2");
         assert!(history[1].invalid_at.is_none());
     }
+
+    // -----------------------------------------------------------------------
+    // Edge case tests for self-editing tools
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_update_memory_both_fields() {
+        let store = DuckStore::open_in_memory().unwrap();
+        let mem = Memory {
+            id: "m-both".into(),
+            project_id: None,
+            content: "original".into(),
+            memory_type: Some("note".into()),
+            source_session_id: None,
+            confidence: 0.5,
+            access_count: 0,
+            created_at: Some(Utc::now().naive_utc()),
+            updated_at: Some(Utc::now().naive_utc()),
+            valid_until: None,
+        };
+        store.insert_memory(&mem).unwrap();
+
+        // Update both content and confidence simultaneously
+        assert!(store.update_memory("m-both", Some("new content"), Some(0.99)).unwrap());
+        let fetched = store.get_memory("m-both").unwrap().unwrap();
+        assert_eq!(fetched.content, "new content");
+        assert_eq!(fetched.confidence, 0.99);
+    }
+
+    #[test]
+    fn test_update_memory_no_changes() {
+        let store = DuckStore::open_in_memory().unwrap();
+        let mem = Memory {
+            id: "m-noop".into(),
+            project_id: None,
+            content: "unchanged".into(),
+            memory_type: None,
+            source_session_id: None,
+            confidence: 0.7,
+            access_count: 0,
+            created_at: Some(Utc::now().naive_utc()),
+            updated_at: Some(Utc::now().naive_utc()),
+            valid_until: None,
+        };
+        store.insert_memory(&mem).unwrap();
+
+        // Pass None for both — no fields to update
+        let result = store.update_memory("m-noop", None, None);
+        // Should either return false or succeed gracefully
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_delete_nonexistent_fact() {
+        let store = DuckStore::open_in_memory().unwrap();
+        assert!(!store.delete_fact("nonexistent-id").unwrap());
+    }
+
+    #[test]
+    fn test_delete_nonexistent_memory() {
+        let store = DuckStore::open_in_memory().unwrap();
+        assert!(!store.delete_memory("nonexistent-id").unwrap());
+    }
+
+    #[test]
+    fn test_get_nonexistent_fact() {
+        let store = DuckStore::open_in_memory().unwrap();
+        assert!(store.get_fact("nonexistent-id").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_get_nonexistent_memory() {
+        let store = DuckStore::open_in_memory().unwrap();
+        assert!(store.get_memory("nonexistent-id").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_invalidate_nonexistent_fact() {
+        let store = DuckStore::open_in_memory().unwrap();
+        assert!(!store.invalidate_fact("nonexistent-id", None).unwrap());
+    }
+
+    #[test]
+    fn test_fact_history_empty_subject() {
+        let store = DuckStore::open_in_memory().unwrap();
+        let history = store.get_fact_history("no-such-subject").unwrap();
+        assert!(history.is_empty());
+    }
+
+    #[test]
+    fn test_search_facts_no_results() {
+        let store = DuckStore::open_in_memory().unwrap();
+        let results = store.search_facts("zzzznonexistent").unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_upsert_fact_different_predicate_not_superseded() {
+        let store = DuckStore::open_in_memory().unwrap();
+        // Insert: auth "uses" JWT
+        store
+            .insert_fact(&make_fact("f-1", "auth", "uses", "JWT"))
+            .unwrap();
+
+        // Upsert with different predicate: auth "prefers" OAuth2
+        store
+            .upsert_fact(&make_fact("f-2", "auth", "prefers", "OAuth2"))
+            .unwrap();
+
+        // Both should be active (different predicates don't conflict)
+        let active = store.get_active_facts(None, 100).unwrap();
+        assert_eq!(active.len(), 2);
+    }
+
+    #[test]
+    fn test_update_memory_confidence_bounds() {
+        let store = DuckStore::open_in_memory().unwrap();
+        let mem = Memory {
+            id: "m-bounds".into(),
+            project_id: None,
+            content: "test".into(),
+            memory_type: None,
+            source_session_id: None,
+            confidence: 0.5,
+            access_count: 0,
+            created_at: Some(Utc::now().naive_utc()),
+            updated_at: Some(Utc::now().naive_utc()),
+            valid_until: None,
+        };
+        store.insert_memory(&mem).unwrap();
+
+        // Set confidence to 0.0 and 1.0 (boundary values)
+        assert!(store.update_memory("m-bounds", None, Some(0.0)).unwrap());
+        let fetched = store.get_memory("m-bounds").unwrap().unwrap();
+        assert_eq!(fetched.confidence, 0.0);
+
+        assert!(store.update_memory("m-bounds", None, Some(1.0)).unwrap());
+        let fetched = store.get_memory("m-bounds").unwrap().unwrap();
+        assert_eq!(fetched.confidence, 1.0);
+    }
+
+    #[test]
+    fn test_multiple_supersessions_chain() {
+        let store = DuckStore::open_in_memory().unwrap();
+
+        // Create a chain: f1 -> f2 -> f3
+        store.insert_fact(&make_fact("f-1", "db", "uses", "SQLite")).unwrap();
+        store.upsert_fact(&make_fact("f-2", "db", "uses", "Postgres")).unwrap();
+        store.upsert_fact(&make_fact("f-3", "db", "uses", "DuckDB")).unwrap();
+
+        // Only the latest should be active
+        let active = store.get_active_facts(None, 100).unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].object, "DuckDB");
+
+        // History should have all 3
+        let history = store.get_fact_history("db").unwrap();
+        assert_eq!(history.len(), 3);
+    }
 }
