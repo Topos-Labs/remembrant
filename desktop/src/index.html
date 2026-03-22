@@ -1,0 +1,1071 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remembrant</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+
+        :root {
+            --bg-deep: #0a0e14;
+            --bg-main: #0d1117;
+            --bg-surface: #161b22;
+            --bg-elevated: #1c2333;
+            --bg-hover: #1f2937;
+            --border: #21262d;
+            --border-bright: #30363d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-dim: #484f58;
+            --accent: #00ff9c;
+            --accent-dim: #00cc7d;
+            --accent-glow: rgba(0, 255, 156, 0.15);
+            --cyan: #79c0ff;
+            --purple: #bc8cff;
+            --orange: #ffa657;
+            --red: #ff7b72;
+            --yellow: #e3b341;
+            --blue: #58a6ff;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'JetBrains Mono', 'Menlo', 'Monaco', monospace;
+            background: var(--bg-deep);
+            color: var(--text-primary);
+            line-height: 1.5;
+            font-size: 13px;
+            overflow-x: hidden;
+        }
+
+        /* Subtle scanline overlay */
+        body::after {
+            content: '';
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: repeating-linear-gradient(
+                0deg,
+                transparent,
+                transparent 2px,
+                rgba(0, 0, 0, 0.03) 2px,
+                rgba(0, 0, 0, 0.03) 4px
+            );
+            pointer-events: none;
+            z-index: 9999;
+        }
+
+        .app { display: flex; height: 100vh; }
+
+        /* --- Sidebar --- */
+        .sidebar {
+            width: 220px;
+            background: var(--bg-main);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        .logo {
+            padding: 20px 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .logo-text {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--accent);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
+        .logo-sub {
+            font-size: 10px;
+            color: var(--text-dim);
+            margin-top: 4px;
+            letter-spacing: 1px;
+        }
+
+        .logo-sub .blink {
+            animation: blink 1s step-end infinite;
+            color: var(--accent);
+        }
+
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+
+        .nav { flex: 1; padding: 12px 0; }
+
+        .nav-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px;
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-size: 12px;
+            transition: all 0.15s;
+            border-left: 2px solid transparent;
+        }
+
+        .nav-item:hover {
+            background: var(--bg-hover);
+            color: var(--text-primary);
+        }
+
+        .nav-item.active {
+            color: var(--accent);
+            border-left-color: var(--accent);
+            background: var(--accent-glow);
+        }
+
+        .nav-icon { font-size: 14px; width: 20px; text-align: center; }
+
+        .nav-badge {
+            margin-left: auto;
+            background: var(--bg-elevated);
+            color: var(--text-dim);
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+        }
+
+        .nav-item.active .nav-badge {
+            background: rgba(0, 255, 156, 0.1);
+            color: var(--accent);
+        }
+
+        .sidebar-footer {
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+            font-size: 10px;
+            color: var(--text-dim);
+        }
+
+        .status-dot {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent);
+            box-shadow: 0 0 6px var(--accent);
+            margin-right: 6px;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* --- Main content --- */
+        .main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .topbar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 24px;
+            background: var(--bg-main);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .search-wrapper {
+            flex: 1;
+            position: relative;
+        }
+
+        .search-prefix {
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--accent);
+            font-size: 12px;
+            pointer-events: none;
+        }
+
+        .search-input {
+            width: 100%;
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 9px 12px 9px 28px;
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 12px;
+            transition: border-color 0.2s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 1px var(--accent-glow);
+        }
+
+        .search-input::placeholder { color: var(--text-dim); }
+
+        .filter-select {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 9px 12px;
+            border-radius: 6px;
+            font-family: inherit;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .filter-select:focus { outline: none; border-color: var(--accent); }
+
+        .btn {
+            background: var(--accent);
+            color: var(--bg-deep);
+            border: none;
+            padding: 9px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: 600;
+            font-size: 12px;
+            transition: all 0.15s;
+        }
+
+        .btn:hover {
+            box-shadow: 0 0 12px var(--accent-glow);
+            filter: brightness(1.1);
+        }
+
+        .btn-ghost {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+
+        .btn-ghost:hover {
+            border-color: var(--text-dim);
+            color: var(--text-primary);
+            box-shadow: none;
+        }
+
+        .content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 24px;
+        }
+
+        /* Scrollbar */
+        .content::-webkit-scrollbar { width: 6px; }
+        .content::-webkit-scrollbar-track { background: transparent; }
+        .content::-webkit-scrollbar-thumb {
+            background: var(--border-bright);
+            border-radius: 3px;
+        }
+        .content::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+        /* --- Stats --- */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent), transparent);
+            opacity: 0.6;
+        }
+
+        .stat-label {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: 6px;
+        }
+
+        .stat-value {
+            font-size: 26px;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .stat-value .unit {
+            font-size: 11px;
+            color: var(--text-dim);
+            font-weight: 400;
+            margin-left: 4px;
+        }
+
+        /* --- Table --- */
+        .panel {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .panel-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .panel-title .count {
+            color: var(--text-dim);
+            font-weight: 400;
+        }
+
+        table { width: 100%; border-collapse: collapse; }
+
+        th {
+            text-align: left;
+            padding: 10px 16px;
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            cursor: pointer;
+            user-select: none;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border);
+        }
+
+        th:hover { color: var(--accent); }
+
+        td {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+        }
+
+        tr:last-child td { border-bottom: none; }
+
+        tbody tr { transition: background 0.1s; }
+        tbody tr:hover { background: var(--bg-hover); cursor: pointer; }
+
+        .agent-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .agent-claude { background: rgba(88, 166, 255, 0.15); color: var(--blue); border: 1px solid rgba(88, 166, 255, 0.2); }
+        .agent-codex { background: rgba(0, 255, 156, 0.1); color: var(--accent); border: 1px solid rgba(0, 255, 156, 0.15); }
+        .agent-gemini { background: rgba(188, 140, 255, 0.15); color: var(--purple); border: 1px solid rgba(188, 140, 255, 0.2); }
+
+        .truncate {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 420px;
+        }
+
+        .dim { color: var(--text-dim); }
+        .mono { font-variant-numeric: tabular-nums; }
+
+        /* --- Cards --- */
+        .card-list { padding: 8px; }
+
+        .memory-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 12px 14px;
+            margin-bottom: 8px;
+            border-left: 2px solid var(--accent);
+            transition: border-color 0.15s;
+        }
+
+        .memory-card:hover { border-left-color: var(--cyan); }
+
+        .card-meta {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+
+        .card-type {
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--accent);
+        }
+
+        .card-date { font-size: 10px; color: var(--text-dim); }
+        .card-body { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
+        .card-footer { font-size: 10px; color: var(--text-dim); margin-top: 6px; }
+
+        .decision-card {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 12px 14px;
+            margin-bottom: 8px;
+            border-left: 2px solid var(--purple);
+        }
+
+        .decision-card:hover { border-left-color: var(--orange); }
+        .decision-card .card-type { color: var(--purple); }
+
+        /* --- Modal --- */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 1000;
+            padding: 40px;
+            overflow-y: auto;
+        }
+
+        .modal {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            max-width: 900px;
+            margin: 0 auto;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            background: var(--bg-elevated);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .modal-header h2 {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-dim);
+            font-size: 20px;
+            cursor: pointer;
+            padding: 0 4px;
+        }
+
+        .modal-close:hover { color: var(--red); }
+
+        .modal-body { padding: 20px; }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px 24px;
+            margin-bottom: 20px;
+        }
+
+        .detail-item label {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .detail-item .val {
+            font-size: 13px;
+            color: var(--text-primary);
+            margin-top: 2px;
+        }
+
+        .tool-call-item {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 10px 12px;
+            margin-bottom: 6px;
+            border-left: 2px solid var(--cyan);
+            font-size: 12px;
+        }
+
+        .tool-call-item.failed { border-left-color: var(--red); }
+
+        .tool-call-item .tc-header {
+            display: flex;
+            justify-content: space-between;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .tool-call-item .tc-cmd {
+            color: var(--text-dim);
+            margin-top: 4px;
+            font-size: 11px;
+            word-break: break-all;
+        }
+
+        .tool-call-item .tc-err {
+            color: var(--red);
+            margin-top: 4px;
+            font-size: 11px;
+        }
+
+        .files-list {
+            list-style: none;
+            padding: 0;
+        }
+
+        .files-list li {
+            padding: 4px 0;
+            font-size: 12px;
+            color: var(--cyan);
+        }
+
+        .files-list li::before {
+            content: '→ ';
+            color: var(--text-dim);
+        }
+
+        /* --- Search results --- */
+        .search-result {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 12px 14px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: border-color 0.15s;
+        }
+
+        .search-result:hover { border-color: var(--accent); }
+
+        .sr-header {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+
+        .sr-body { color: var(--text-secondary); font-size: 12px; }
+
+        /* --- States --- */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-dim);
+        }
+
+        .empty-state .empty-icon { font-size: 32px; margin-bottom: 12px; }
+        .empty-state .empty-text { font-size: 13px; }
+        .empty-state code {
+            background: var(--bg-elevated);
+            padding: 2px 6px;
+            border-radius: 3px;
+            color: var(--accent);
+        }
+
+        .loading-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--accent);
+            font-size: 12px;
+        }
+
+        .loading-state::after {
+            content: '...';
+            animation: dots 1.5s steps(4, end) infinite;
+        }
+
+        @keyframes dots {
+            0%, 20% { content: ''; }
+            40% { content: '.'; }
+            60% { content: '..'; }
+            80%, 100% { content: '...'; }
+        }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* --- Statusbar --- */
+        .statusbar {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 6px 24px;
+            background: var(--bg-main);
+            border-top: 1px solid var(--border);
+            font-size: 10px;
+            color: var(--text-dim);
+        }
+
+        .statusbar .sep {
+            width: 1px;
+            height: 10px;
+            background: var(--border);
+        }
+    </style>
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="logo">
+                <div class="logo-text">remembrant</div>
+                <div class="logo-sub">agent memory system <span class="blink">_</span></div>
+            </div>
+
+            <div class="nav">
+                <div class="nav-item active" data-tab="sessions" onclick="switchTab('sessions')">
+                    <span class="nav-icon">⊞</span> Sessions
+                    <span class="nav-badge" id="navSessions">-</span>
+                </div>
+                <div class="nav-item" data-tab="memories" onclick="switchTab('memories')">
+                    <span class="nav-icon">◈</span> Memories
+                    <span class="nav-badge" id="navMemories">-</span>
+                </div>
+                <div class="nav-item" data-tab="decisions" onclick="switchTab('decisions')">
+                    <span class="nav-icon">⊘</span> Decisions
+                    <span class="nav-badge" id="navDecisions">-</span>
+                </div>
+                <div class="nav-item" data-tab="search" onclick="switchTab('search')" id="navSearchItem" style="display:none">
+                    <span class="nav-icon">⊕</span> Search
+                </div>
+            </div>
+
+            <div class="sidebar-footer">
+                <span class="status-dot"></span> system active
+            </div>
+        </div>
+
+        <!-- Main -->
+        <div class="main">
+            <div class="topbar">
+                <div class="search-wrapper">
+                    <span class="search-prefix">›</span>
+                    <input class="search-input" id="searchInput" type="text" placeholder="search sessions, memories, decisions..." />
+                </div>
+                <select class="filter-select" id="projectFilter">
+                    <option value="">all projects</option>
+                </select>
+                <button class="btn" onclick="performSearch()">search</button>
+            </div>
+
+            <div class="content">
+                <!-- Stats -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">sessions</div>
+                        <div class="stat-value" id="statSessions">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">memories</div>
+                        <div class="stat-value" id="statMemories">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">decisions</div>
+                        <div class="stat-value" id="statDecisions">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">projects</div>
+                        <div class="stat-value" id="statProjects">-</div>
+                    </div>
+                </div>
+
+                <!-- Sessions tab -->
+                <div class="tab-content active" id="sessionsPanel">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div class="panel-title">sessions <span class="count" id="sessionsCount"></span></div>
+                        </div>
+                        <div id="sessionsContent"><div class="loading-state">loading</div></div>
+                    </div>
+                </div>
+
+                <!-- Memories tab -->
+                <div class="tab-content" id="memoriesPanel">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div class="panel-title">memories</div>
+                        </div>
+                        <div id="memoriesContent" class="card-list"><div class="loading-state">loading</div></div>
+                    </div>
+                </div>
+
+                <!-- Decisions tab -->
+                <div class="tab-content" id="decisionsPanel">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div class="panel-title">decision journal</div>
+                        </div>
+                        <div id="decisionsContent" class="card-list"><div class="loading-state">loading</div></div>
+                    </div>
+                </div>
+
+                <!-- Search tab -->
+                <div class="tab-content" id="searchPanel">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div class="panel-title">search results</div>
+                            <button class="btn-ghost btn" onclick="clearSearch()">clear</button>
+                        </div>
+                        <div id="searchContent" class="card-list"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="statusbar">
+                <span><span class="status-dot"></span>connected</span>
+                <span class="sep"></span>
+                <span id="sbProjects">-</span>
+                <span class="sep"></span>
+                <span id="sbAgents">-</span>
+                <span class="sep"></span>
+                <span>v0.1.0</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detail modal -->
+    <div class="modal-overlay" id="detailModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="modalTitle">Session Detail</h2>
+                <button class="modal-close" onclick="closeDetail()">×</button>
+            </div>
+            <div class="modal-body" id="detailContent"></div>
+        </div>
+    </div>
+
+    <script>
+        const { invoke } = window.__TAURI__.core;
+
+        let allSessions = [];
+        let currentProject = '';
+        let sortField = 'started_at';
+        let sortAsc = false;
+
+        // --- Tabs ---
+        function switchTab(tab) {
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(p => p.classList.remove('active'));
+            document.querySelector(`.nav-item[data-tab="${tab}"]`).classList.add('active');
+            document.getElementById(tab + 'Panel').classList.add('active');
+            if (tab === 'memories') loadMemories();
+            if (tab === 'decisions') loadDecisions();
+        }
+
+        // --- Stats ---
+        async function loadStats() {
+            try {
+                const d = await invoke('get_stats');
+                document.getElementById('statSessions').textContent = d.sessions || 0;
+                document.getElementById('statMemories').textContent = d.memories || 0;
+                document.getElementById('statDecisions').textContent = d.decisions || 0;
+                document.getElementById('statProjects').textContent = d.projects || 0;
+                document.getElementById('navSessions').textContent = d.sessions || 0;
+                document.getElementById('navMemories').textContent = d.memories || 0;
+                document.getElementById('navDecisions').textContent = d.decisions || 0;
+                document.getElementById('sbProjects').textContent = (d.projects || 0) + ' projects';
+            } catch (e) { console.error('Stats:', e); }
+        }
+
+        // --- Projects ---
+        async function loadProjects() {
+            try {
+                const projects = await invoke('get_projects');
+                const sel = document.getElementById('projectFilter');
+                projects.forEach(p => {
+                    const o = document.createElement('option');
+                    o.value = p; o.textContent = p;
+                    sel.appendChild(o);
+                });
+            } catch (e) { console.error('Projects:', e); }
+        }
+
+        // --- Sessions ---
+        async function loadSessions(project) {
+            try {
+                const args = { limit: 200 };
+                if (project) args.project = project;
+                const sessions = await invoke('get_sessions', args);
+                allSessions = sessions;
+                document.getElementById('sessionsCount').textContent = `(${sessions.length})`;
+                renderSessions(sessions);
+            } catch (e) {
+                document.getElementById('sessionsContent').innerHTML =
+                    '<div class="empty-state"><div class="empty-icon">⊗</div><div class="empty-text">failed to load sessions</div></div>';
+            }
+        }
+
+        function renderSessions(sessions) {
+            const el = document.getElementById('sessionsContent');
+            if (!sessions.length) {
+                el.innerHTML = '<div class="empty-state"><div class="empty-icon">⊞</div><div class="empty-text">no sessions yet. run <code>rem init</code> to begin.</div></div>';
+                return;
+            }
+            el.innerHTML = `<table>
+                <thead><tr>
+                    <th onclick="sortBy('agent')">agent</th>
+                    <th onclick="sortBy('project_id')">project</th>
+                    <th onclick="sortBy('started_at')">date</th>
+                    <th>msgs</th>
+                    <th>tools</th>
+                    <th>tokens</th>
+                    <th onclick="sortBy('summary')">summary</th>
+                </tr></thead>
+                <tbody>${sessions.map(s => {
+                    const a = s.agent || 'unknown';
+                    const cls = 'agent-' + a.toLowerCase();
+                    const dt = s.started_at ? fmtDate(s.started_at) : '-';
+                    const sum = s.summary || '—';
+                    return `<tr onclick="showDetail('${s.id}')">
+                        <td><span class="agent-tag ${cls}">${a}</span></td>
+                        <td class="dim">${s.project_id || '-'}</td>
+                        <td class="mono dim">${dt}</td>
+                        <td class="mono">${s.message_count || '-'}</td>
+                        <td class="mono">${s.tool_call_count || '-'}</td>
+                        <td class="mono dim">${s.total_tokens ? fmtNum(s.total_tokens) : '-'}</td>
+                        <td class="truncate" title="${esc(sum)}">${esc(sum)}</td>
+                    </tr>`;
+                }).join('')}</tbody></table>`;
+        }
+
+        function sortBy(field) {
+            if (sortField === field) sortAsc = !sortAsc;
+            else { sortField = field; sortAsc = true; }
+            allSessions.sort((a, b) => {
+                const av = a[field] || '', bv = b[field] || '';
+                return sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+            });
+            renderSessions(allSessions);
+        }
+
+        // --- Detail ---
+        async function showDetail(id) {
+            try {
+                const data = await invoke('get_session_detail', { id });
+                const s = data.session;
+                const tcs = data.tool_calls || [];
+
+                let html = `<div class="detail-grid">
+                    <div class="detail-item"><label>id</label><div class="val dim" style="font-size:11px;word-break:break-all">${s.id}</div></div>
+                    <div class="detail-item"><label>agent</label><div class="val"><span class="agent-tag agent-${(s.agent||'').toLowerCase()}">${s.agent}</span></div></div>
+                    <div class="detail-item"><label>project</label><div class="val">${s.project_id || '-'}</div></div>
+                    <div class="detail-item"><label>duration</label><div class="val">${s.duration_minutes || '-'} min</div></div>
+                    <div class="detail-item"><label>started</label><div class="val mono">${s.started_at ? new Date(s.started_at).toLocaleString() : '-'}</div></div>
+                    <div class="detail-item"><label>ended</label><div class="val mono">${s.ended_at ? new Date(s.ended_at).toLocaleString() : '-'}</div></div>
+                    <div class="detail-item"><label>messages</label><div class="val mono">${s.message_count || '-'}</div></div>
+                    <div class="detail-item"><label>tokens</label><div class="val mono">${s.total_tokens ? fmtNum(s.total_tokens) : '-'}</div></div>
+                </div>`;
+
+                if (s.summary) {
+                    html += `<div style="margin-bottom:16px"><label style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">summary</label><div style="margin-top:4px;color:var(--text-secondary);font-size:12px;line-height:1.6">${esc(s.summary)}</div></div>`;
+                }
+
+                if (s.files_changed && s.files_changed.length) {
+                    html += `<div style="margin-bottom:16px"><label style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">files changed (${s.files_changed.length})</label><ul class="files-list">${s.files_changed.map(f => `<li>${esc(f)}</li>`).join('')}</ul></div>`;
+                }
+
+                if (tcs.length) {
+                    html += `<div><label style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">tool calls (${tcs.length})</label>`;
+                    tcs.forEach(tc => {
+                        const cls = tc.success === false ? ' failed' : '';
+                        const ts = tc.timestamp ? new Date(tc.timestamp).toLocaleTimeString() : '';
+                        html += `<div class="tool-call-item${cls}">
+                            <div class="tc-header"><span>${esc(tc.tool_name || 'unknown')}</span><span class="dim">${ts}</span></div>
+                            ${tc.command ? `<div class="tc-cmd">${esc(tc.command.substring(0, 150))}${tc.command.length > 150 ? '…' : ''}</div>` : ''}
+                            ${tc.error_message ? `<div class="tc-err">${esc(tc.error_message)}</div>` : ''}
+                        </div>`;
+                    });
+                    html += '</div>';
+                }
+
+                document.getElementById('modalTitle').textContent = `Session — ${s.agent}`;
+                document.getElementById('detailContent').innerHTML = html;
+                document.getElementById('detailModal').style.display = 'block';
+            } catch (e) { console.error('Detail:', e); }
+        }
+
+        function closeDetail() {
+            document.getElementById('detailModal').style.display = 'none';
+        }
+
+        // --- Memories ---
+        async function loadMemories() {
+            const el = document.getElementById('memoriesContent');
+            try {
+                const args = { limit: 200 };
+                if (currentProject) args.project = currentProject;
+                const memories = await invoke('get_memories', args);
+                if (!memories.length) {
+                    el.innerHTML = '<div class="empty-state"><div class="empty-icon">◈</div><div class="empty-text">no memories extracted yet</div></div>';
+                    return;
+                }
+                el.innerHTML = memories.map(m => {
+                    const t = m.memory_type || 'general';
+                    const d = m.created_at ? fmtDate(m.created_at) : '';
+                    return `<div class="memory-card">
+                        <div class="card-meta"><span class="card-type">${esc(t)}</span><span class="card-date">${d}</span></div>
+                        <div class="card-body">${esc(m.content)}</div>
+                        ${m.project_id ? `<div class="card-footer">project: ${esc(m.project_id)}</div>` : ''}
+                    </div>`;
+                }).join('');
+            } catch (e) {
+                el.innerHTML = '<div class="empty-state"><div class="empty-icon">⊗</div><div class="empty-text">failed to load</div></div>';
+            }
+        }
+
+        // --- Decisions ---
+        async function loadDecisions() {
+            const el = document.getElementById('decisionsContent');
+            try {
+                const args = {};
+                if (currentProject) args.project = currentProject;
+                const decisions = await invoke('get_decisions', args);
+                if (!decisions.length) {
+                    el.innerHTML = '<div class="empty-state"><div class="empty-icon">⊘</div><div class="empty-text">no decisions recorded yet</div></div>';
+                    return;
+                }
+                el.innerHTML = decisions.map(d => {
+                    const dt = d.created_at ? fmtDate(d.created_at) : '';
+                    return `<div class="decision-card">
+                        <div class="card-meta"><span class="card-type">${esc(d.decision_type || 'decision')}</span><span class="card-date">${dt}</span></div>
+                        <div class="card-body" style="color:var(--text-primary);font-weight:500">${esc(d.what)}</div>
+                        ${d.why ? `<div class="card-body" style="margin-top:4px">↳ ${esc(d.why)}</div>` : ''}
+                        ${d.alternatives && d.alternatives.length ? `<div class="card-footer">alternatives: ${d.alternatives.map(esc).join(' · ')}</div>` : ''}
+                        ${d.project_id ? `<div class="card-footer">project: ${esc(d.project_id)}</div>` : ''}
+                    </div>`;
+                }).join('');
+            } catch (e) {
+                el.innerHTML = '<div class="empty-state"><div class="empty-icon">⊗</div><div class="empty-text">failed to load</div></div>';
+            }
+        }
+
+        // --- Search ---
+        async function performSearch() {
+            const q = document.getElementById('searchInput').value.trim();
+            if (!q) return;
+
+            const el = document.getElementById('searchContent');
+            el.innerHTML = '<div class="loading-state">searching</div>';
+            document.getElementById('navSearchItem').style.display = '';
+            switchTab('search');
+
+            try {
+                const [sessions, memories] = await Promise.all([
+                    invoke('search_sessions', { query: q }),
+                    invoke('search_memories', { query: q }),
+                ]);
+
+                let html = '';
+                if (sessions.length) {
+                    html += `<div style="padding:8px 6px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">sessions (${sessions.length})</div>`;
+                    sessions.forEach(s => {
+                        const dt = s.started_at ? fmtDate(s.started_at) : '';
+                        html += `<div class="search-result" onclick="showDetail('${s.id}')">
+                            <div class="sr-header"><span class="agent-tag agent-${(s.agent||'').toLowerCase()}">${s.agent}</span><span class="dim">${s.project_id || ''}</span><span class="dim mono">${dt}</span></div>
+                            <div class="sr-body">${esc(s.summary || '—')}</div>
+                        </div>`;
+                    });
+                }
+                if (memories.length) {
+                    html += `<div style="padding:12px 6px 8px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">memories (${memories.length})</div>`;
+                    memories.forEach(m => {
+                        html += `<div class="memory-card">
+                            <div class="card-meta"><span class="card-type">${esc(m.memory_type || 'general')}</span></div>
+                            <div class="card-body">${esc(m.content)}</div>
+                        </div>`;
+                    });
+                }
+                if (!sessions.length && !memories.length) {
+                    html = '<div class="empty-state"><div class="empty-icon">⊕</div><div class="empty-text">no results for "' + esc(q) + '"</div></div>';
+                }
+                el.innerHTML = html;
+            } catch (e) {
+                el.innerHTML = '<div class="empty-state"><div class="empty-icon">⊗</div><div class="empty-text">search failed</div></div>';
+            }
+        }
+
+        function clearSearch() {
+            document.getElementById('searchInput').value = '';
+            document.getElementById('navSearchItem').style.display = 'none';
+            switchTab('sessions');
+        }
+
+        // --- Utility ---
+        function esc(s) {
+            if (!s) return '';
+            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function fmtDate(s) {
+            try { return new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+            catch { return s; }
+        }
+
+        function fmtNum(n) {
+            if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+            if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+            return String(n);
+        }
+
+        // --- Events ---
+        document.getElementById('projectFilter').addEventListener('change', e => {
+            currentProject = e.target.value;
+            loadSessions(currentProject);
+        });
+
+        document.getElementById('searchInput').addEventListener('keydown', e => {
+            if (e.key === 'Enter') performSearch();
+        });
+
+        document.getElementById('detailModal').addEventListener('click', e => {
+            if (e.target === document.getElementById('detailModal')) closeDetail();
+        });
+
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') closeDetail();
+        });
+
+        // --- Init ---
+        loadStats();
+        loadProjects();
+        loadSessions();
+    </script>
+</body>
+</html>

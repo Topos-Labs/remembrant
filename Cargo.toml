@@ -1,0 +1,64 @@
+[workspace]
+members = ["engine", "cli", "desktop/src-tauri"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/Topos-Labs/remembrant"
+description = "Shared persistent memory for coding agents"
+
+[workspace.dependencies]
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Async
+tokio = { version = "1", features = ["full"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Arrow (must match lancedb's arrow version)
+arrow-array = "57"
+arrow-schema = "57"
+
+# Async streams
+futures = "0.3"
+
+# Databases
+duckdb = { version = "1", features = ["bundled", "chrono"] }
+# kuzu = "0.11"  # TODO: re-enable when Rust SDK stabilizes
+lancedb = "0.27"
+
+# File watching
+notify = "7"
+notify-debouncer-mini = "0.5"
+
+# Hashing
+sha2 = "0.10"
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Regex
+regex = "1"
+
+# Directories
+dirs = "6"

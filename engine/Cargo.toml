@@ -1,0 +1,38 @@
+[package]
+name = "remembrant-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core engine for Remembrant: ingestion, storage, search, and graph"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tokio.workspace = true
+arrow-array.workspace = true
+arrow-schema.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+duckdb.workspace = true
+# kuzu.workspace = true  # TODO: re-enable when Rust SDK stabilizes
+lancedb.workspace = true
+futures.workspace = true
+notify.workspace = true
+notify-debouncer-mini.workspace = true
+sha2.workspace = true
+reqwest.workspace = true
+regex.workspace = true
+dirs.workspace = true
+infiniloom-engine = { path = "../../infiniloom/engine", optional = true }
+blake3 = { version = "1", optional = true }
+
+[features]
+default = []
+code-analysis = ["dep:infiniloom-engine", "dep:blake3"]
+
+[dev-dependencies]
+tempfile = "3"
