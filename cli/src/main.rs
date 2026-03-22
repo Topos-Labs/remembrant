@@ -557,7 +557,7 @@ fn cmd_status() -> Result<()> {
         // Row counts
         match open_store(&config) {
             Ok(store) => {
-                let sessions = store.get_recent_sessions(usize::MAX)?;
+                let sessions = store.get_recent_sessions(i32::MAX as usize)?;
                 println!("  Sessions:    {}", sessions.len());
 
                 let memories = store.search_memories("")?;

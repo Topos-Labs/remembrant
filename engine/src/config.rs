@@ -175,7 +175,7 @@ pub struct EmbeddingConfig {
 impl Default for EmbeddingConfig {
     fn default() -> Self {
         Self {
-            model: "nomic-embed-text".to_string(),
+            model: "text-embedding-nomic-embed-text-v1.5@q8_0".to_string(),
             api_key_env: String::new(),
             batch_size: 100,
             dimensions: 768,
@@ -218,8 +218,8 @@ impl Default for DistillationConfig {
     fn default() -> Self {
         Self {
             level: DistillationLevel::default(),
-            llm_provider: String::new(),
-            llm_model: String::new(),
+            llm_provider: "http://localhost:1234/v1".to_string(),
+            llm_model: "qwen/qwen3-30b-a3b".to_string(),
             api_key_env: String::new(),
         }
     }
@@ -312,7 +312,7 @@ mod tests {
         let yaml = serde_yaml::to_string(&config).expect("serialize");
         let parsed: AppConfig = serde_yaml::from_str(&yaml).expect("deserialize");
 
-        assert_eq!(parsed.embedding.model, "nomic-embed-text");
+        assert_eq!(parsed.embedding.model, "text-embedding-nomic-embed-text-v1.5@q8_0");
         assert_eq!(parsed.embedding.batch_size, 100);
         assert_eq!(parsed.embedding.dimensions, 768);
         assert_eq!(parsed.distillation.level, DistillationLevel::Balanced);
