@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Information about a detected coding agent installation.
 #[derive(Debug, Clone)]
@@ -54,7 +54,7 @@ fn home_dir() -> Option<PathBuf> {
 
 /// Detect Claude Code by looking for `~/.claude/` with a `projects/` subdirectory.
 /// Session count: number of entries in `~/.claude/projects/*/`.
-fn detect_claude_code(home: &PathBuf) -> Option<AgentInfo> {
+fn detect_claude_code(home: &Path) -> Option<AgentInfo> {
     let base = home.join(".claude");
     if !base.is_dir() {
         return None;
@@ -83,7 +83,7 @@ fn detect_claude_code(home: &PathBuf) -> Option<AgentInfo> {
 
 /// Detect Codex CLI by looking for `~/.codex/` with `sessions/` and `config.toml`.
 /// Session count: number of directories in `~/.codex/sessions/`.
-fn detect_codex(home: &PathBuf) -> Option<AgentInfo> {
+fn detect_codex(home: &Path) -> Option<AgentInfo> {
     let base = home.join(".codex");
     if !base.is_dir() {
         return None;
@@ -112,7 +112,7 @@ fn detect_codex(home: &PathBuf) -> Option<AgentInfo> {
 
 /// Detect Gemini CLI by looking for `~/.gemini/` with `tmp/` and `projects.json`.
 /// Session count: number of JSON files across `~/.gemini/tmp/*/chats/`.
-fn detect_gemini(home: &PathBuf) -> Option<AgentInfo> {
+fn detect_gemini(home: &Path) -> Option<AgentInfo> {
     let base = home.join(".gemini");
     if !base.is_dir() {
         return None;
@@ -144,13 +144,13 @@ fn count_gemini_chats(tmp_dir: &PathBuf) -> usize {
     let mut total = 0;
     for entry in entries.flatten() {
         let chats_dir = entry.path().join("chats");
-        if chats_dir.is_dir() {
-            if let Ok(chat_files) = std::fs::read_dir(&chats_dir) {
-                total += chat_files
-                    .flatten()
-                    .filter(|f| f.path().extension().map_or(false, |ext| ext == "json"))
-                    .count();
-            }
+        if chats_dir.is_dir()
+            && let Ok(chat_files) = std::fs::read_dir(&chats_dir)
+        {
+            total += chat_files
+                .flatten()
+                .filter(|f| f.path().extension().is_some_and(|ext| ext == "json"))
+                .count();
         }
     }
     total
@@ -172,7 +172,7 @@ fn count_dirs(dir: &PathBuf) -> usize {
     std::fs::read_dir(dir)
         .map(|rd| {
             rd.flatten()
-                .filter(|e| e.file_type().map_or(false, |ft| ft.is_dir()))
+                .filter(|e| e.file_type().is_ok_and(|ft| ft.is_dir()))
                 .count()
         })
         .unwrap_or(0)

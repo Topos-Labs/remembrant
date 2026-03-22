@@ -130,23 +130,23 @@ impl FileWatcher {
 
 /// Returns `true` if the file path ends with `.json` or `.jsonl`.
 fn is_relevant_file(path: &std::path::Path) -> bool {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("json" | "jsonl") => true,
-        _ => false,
-    }
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some("json" | "jsonl")
+    )
 }
 
 /// Expand a leading `~` in a path string to the user's home directory.
 fn expand_tilde(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest).to_string_lossy().to_string();
-        }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest).to_string_lossy().to_string();
     }
-    if path == "~" {
-        if let Some(home) = dirs::home_dir() {
-            return home.to_string_lossy().to_string();
-        }
+    if path == "~"
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.to_string_lossy().to_string();
     }
     path.to_string()
 }

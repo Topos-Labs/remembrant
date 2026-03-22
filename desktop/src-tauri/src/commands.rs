@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use remembrant_engine::store::DuckStore;
 use remembrant_engine::AppConfig;
+use remembrant_engine::store::DuckStore;
 use serde_json::Value;
 
 fn expand_tilde(path: &str) -> PathBuf {
@@ -17,8 +17,7 @@ fn open_store() -> Result<DuckStore, String> {
     let config = AppConfig::load().map_err(|e| format!("Config error: {e}"))?;
     let db_path = expand_tilde(&config.storage.duckdb_path);
     if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directory: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create directory: {e}"))?;
     }
     DuckStore::open(&db_path).map_err(|e| format!("DuckDB error: {e}"))
 }
@@ -42,7 +41,11 @@ pub fn get_stats() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub fn get_sessions(limit: Option<usize>, project: Option<String>, agent: Option<String>) -> Result<Value, String> {
+pub fn get_sessions(
+    limit: Option<usize>,
+    project: Option<String>,
+    agent: Option<String>,
+) -> Result<Value, String> {
     let store = open_store()?;
     let limit = limit.unwrap_or(100);
     let sessions = store
@@ -110,8 +113,6 @@ pub fn search_sessions(query: String) -> Result<Value, String> {
 #[tauri::command]
 pub fn search_memories(query: String) -> Result<Value, String> {
     let store = open_store()?;
-    let memories = store
-        .search_memories(&query)
-        .map_err(|e| e.to_string())?;
+    let memories = store.search_memories(&query).map_err(|e| e.to_string())?;
     serde_json::to_value(&memories).map_err(|e| e.to_string())
 }

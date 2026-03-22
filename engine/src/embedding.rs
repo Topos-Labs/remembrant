@@ -198,7 +198,7 @@ pub async fn batch_embed<P: EmbedProvider>(
     }
 
     let batch_size = batch_size.max(1);
-    let n_batches = (texts.len() + batch_size - 1) / batch_size;
+    let n_batches = texts.len().div_ceil(batch_size);
     info!(
         total = texts.len(),
         batch_size, n_batches, "batch embedding texts"

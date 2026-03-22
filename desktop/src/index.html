@@ -772,7 +772,29 @@
     </div>
 
     <script>
-        const { invoke } = window.__TAURI__.core;
+        // Debug: show errors visually
+        function debugLog(msg) {
+            const el = document.getElementById('statSessions');
+            if (el) el.title = msg;
+            console.log(msg);
+        }
+
+        let invoke;
+        try {
+            if (window.__TAURI__ && window.__TAURI__.core) {
+                invoke = window.__TAURI__.core.invoke;
+                debugLog('Tauri IPC ready');
+            } else if (window.__TAURI_INTERNALS__) {
+                invoke = window.__TAURI_INTERNALS__.invoke;
+                debugLog('Tauri internals IPC ready');
+            } else {
+                debugLog('ERROR: No Tauri API found');
+                invoke = async (cmd) => { throw new Error('Tauri API not available for: ' + cmd); };
+            }
+        } catch(e) {
+            debugLog('ERROR init: ' + e.message);
+            invoke = async (cmd) => { throw new Error('Tauri init failed: ' + e.message); };
+        }
 
         let allSessions = [];
         let currentProject = '';
@@ -801,7 +823,10 @@
                 document.getElementById('navMemories').textContent = d.memories || 0;
                 document.getElementById('navDecisions').textContent = d.decisions || 0;
                 document.getElementById('sbProjects').textContent = (d.projects || 0) + ' projects';
-            } catch (e) { console.error('Stats:', e); }
+            } catch (e) {
+                document.getElementById('statSessions').textContent = 'ERR';
+                document.getElementById('statSessions').title = String(e);
+            }
         }
 
         // --- Projects ---
@@ -814,7 +839,7 @@
                     o.value = p; o.textContent = p;
                     sel.appendChild(o);
                 });
-            } catch (e) { console.error('Projects:', e); }
+            } catch (e) { debugLog('Projects err: ' + e); }
         }
 
         // --- Sessions ---
@@ -828,7 +853,7 @@
                 renderSessions(sessions);
             } catch (e) {
                 document.getElementById('sessionsContent').innerHTML =
-                    '<div class="empty-state"><div class="empty-icon">⊗</div><div class="empty-text">failed to load sessions</div></div>';
+                    '<div class="empty-state"><div class="empty-icon">⊗</div><div class="empty-text">Error: ' + esc(String(e)) + '</div></div>';
             }
         }
 

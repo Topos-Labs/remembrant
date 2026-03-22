@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 /// Top-level application configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
     pub agents: AgentsConfig,
@@ -25,20 +25,6 @@ pub struct AppConfig {
     pub cross_project: CrossProjectConfig,
     #[serde(default)]
     pub watch: WatchConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            agents: AgentsConfig::default(),
-            storage: StorageConfig::default(),
-            embedding: EmbeddingConfig::default(),
-            distillation: DistillationConfig::default(),
-            retention: RetentionConfig::default(),
-            cross_project: CrossProjectConfig::default(),
-            watch: WatchConfig::default(),
-        }
-    }
 }
 
 impl AppConfig {
@@ -111,7 +97,7 @@ impl Default for AgentsConfig {
 }
 
 /// A single agent entry (enabled flag + transcript directory).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AgentEntry {
     pub enabled: bool,
     pub path: String,
@@ -122,15 +108,6 @@ impl AgentEntry {
         Self {
             enabled,
             path: path.to_string(),
-        }
-    }
-}
-
-impl Default for AgentEntry {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            path: String::new(),
         }
     }
 }
@@ -190,18 +167,14 @@ impl Default for EmbeddingConfig {
 /// How aggressively to distil ingested transcripts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum DistillationLevel {
     None,
     Minimal,
+    #[default]
     Balanced,
     Aggressive,
     Full,
-}
-
-impl Default for DistillationLevel {
-    fn default() -> Self {
-        Self::Balanced
-    }
 }
 
 /// Distillation settings.
@@ -250,15 +223,11 @@ impl Default for RetentionConfig {
 /// Default visibility for cross-project memory items.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum Visibility {
+    #[default]
     Public,
     Private,
-}
-
-impl Default for Visibility {
-    fn default() -> Self {
-        Self::Public
-    }
 }
 
 /// Cross-project sharing settings.
@@ -312,7 +281,10 @@ mod tests {
         let yaml = serde_yaml::to_string(&config).expect("serialize");
         let parsed: AppConfig = serde_yaml::from_str(&yaml).expect("deserialize");
 
-        assert_eq!(parsed.embedding.model, "text-embedding-nomic-embed-text-v1.5@q8_0");
+        assert_eq!(
+            parsed.embedding.model,
+            "text-embedding-nomic-embed-text-v1.5@q8_0"
+        );
         assert_eq!(parsed.embedding.batch_size, 100);
         assert_eq!(parsed.embedding.dimensions, 768);
         assert_eq!(parsed.distillation.level, DistillationLevel::Balanced);

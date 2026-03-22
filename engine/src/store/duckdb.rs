@@ -64,6 +64,26 @@ pub struct ToolCall {
     pub timestamp: Option<NaiveDateTime>,
 }
 
+/// A temporal fact extracted from a coding session.
+/// Facts have validity windows: they are true from `valid_at` until `invalid_at`.
+/// When a contradicting fact is found, the old fact's `invalid_at` is set and a new
+/// fact is created, preserving the full history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Fact {
+    pub id: String,
+    pub project_id: Option<String>,
+    pub subject: String,   // entity the fact is about (e.g., "auth module")
+    pub predicate: String, // relationship (e.g., "uses", "depends_on", "is_located_at")
+    pub object: String,    // value (e.g., "JWT tokens", "src/auth.rs")
+    pub confidence: f32,
+    pub source_session_id: Option<String>,
+    pub source_agent: Option<String>,
+    pub valid_at: Option<NaiveDateTime>,
+    pub invalid_at: Option<NaiveDateTime>, // None = still valid
+    pub superseded_by: Option<String>,     // ID of the fact that replaced this one
+    pub created_at: Option<NaiveDateTime>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileStat {
     pub file_path: String,
@@ -78,21 +98,21 @@ pub struct FileStat {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeSymbol {
-    pub id: String,                    // "project:file:symbol:line"
+    pub id: String, // "project:file:symbol:line"
     pub project_id: String,
     pub file_path: String,
     pub symbol_name: String,
-    pub symbol_kind: String,           // function, class, struct, method, etc.
+    pub symbol_kind: String, // function, class, struct, method, etc.
     pub signature: Option<String>,
     pub docstring: Option<String>,
     pub start_line: i32,
     pub end_line: i32,
-    pub visibility: Option<String>,    // public, private, protected
+    pub visibility: Option<String>, // public, private, protected
     pub parent_symbol: Option<String>,
     pub pagerank_score: f64,
     pub reference_count: i32,
     pub language: Option<String>,
-    pub content_hash: Option<String>,  // BLAKE3
+    pub content_hash: Option<String>, // BLAKE3
     pub indexed_at: Option<NaiveDateTime>,
 }
 
@@ -102,7 +122,7 @@ pub struct CodeDependency {
     pub project_id: String,
     pub from_symbol: String,
     pub to_symbol: String,
-    pub relationship: String,          // calls, imports, inherits, implements, references
+    pub relationship: String, // calls, imports, inherits, implements, references
     pub from_file: String,
     pub to_file: String,
 }
@@ -257,6 +277,21 @@ impl DuckStore {
                 error_message TEXT,
                 duration_ms INTEGER,
                 timestamp TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS facts (
+                id TEXT PRIMARY KEY,
+                project_id TEXT,
+                subject TEXT NOT NULL,
+                predicate TEXT NOT NULL,
+                object TEXT NOT NULL,
+                confidence REAL DEFAULT 1.0,
+                source_session_id TEXT,
+                source_agent TEXT,
+                valid_at TIMESTAMP DEFAULT current_timestamp,
+                invalid_at TIMESTAMP,
+                superseded_by TEXT,
+                created_at TIMESTAMP DEFAULT current_timestamp
             );
 
             CREATE TABLE IF NOT EXISTS file_stats (
@@ -471,6 +506,498 @@ impl DuckStore {
         )
         .context("failed to insert memory")?;
         Ok(())
+    }
+
+    /// Increment access_count for a memory (called on retrieval).
+    pub fn touch_memory(&self, memory_id: &str) -> Result<()> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        conn.execute(
+            "UPDATE memories SET access_count = access_count + 1, updated_at = ? WHERE id = ?",
+            params![Utc::now().naive_utc(), memory_id],
+        )
+        .context("failed to touch memory")?;
+        Ok(())
+    }
+
+    /// Update a memory's content and/or confidence.
+    pub fn update_memory(
+        &self,
+        memory_id: &str,
+        new_content: Option<&str>,
+        new_confidence: Option<f32>,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        let now = Utc::now().naive_utc();
+
+        let (set_clause, mut values): (String, Vec<Box<dyn duckdb::ToSql>>) =
+            match (new_content, new_confidence) {
+                (Some(c), Some(conf)) => (
+                    "content = ?, confidence = ?, updated_at = ?".into(),
+                    vec![
+                        Box::new(c.to_string()) as Box<dyn duckdb::ToSql>,
+                        Box::new(conf),
+                        Box::new(now),
+                    ],
+                ),
+                (Some(c), None) => (
+                    "content = ?, updated_at = ?".into(),
+                    vec![
+                        Box::new(c.to_string()) as Box<dyn duckdb::ToSql>,
+                        Box::new(now),
+                    ],
+                ),
+                (None, Some(conf)) => (
+                    "confidence = ?, updated_at = ?".into(),
+                    vec![Box::new(conf) as Box<dyn duckdb::ToSql>, Box::new(now)],
+                ),
+                (None, None) => return Ok(false),
+            };
+
+        values.push(Box::new(memory_id.to_string()));
+        let sql = format!("UPDATE memories SET {set_clause} WHERE id = ?");
+        let params_ref: Vec<&dyn duckdb::ToSql> = values.iter().map(|b| b.as_ref()).collect();
+        let affected = conn
+            .execute(&sql, params_ref.as_slice())
+            .context("failed to update memory")?;
+        Ok(affected > 0)
+    }
+
+    /// Delete a memory by ID.
+    pub fn delete_memory(&self, memory_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        let affected = conn
+            .execute("DELETE FROM memories WHERE id = ?", params![memory_id])
+            .context("failed to delete memory")?;
+        Ok(affected > 0)
+    }
+
+    /// Delete a fact by ID (hard delete, not invalidation).
+    pub fn delete_fact(&self, fact_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        let affected = conn
+            .execute("DELETE FROM facts WHERE id = ?", params![fact_id])
+            .context("failed to delete fact")?;
+        Ok(affected > 0)
+    }
+
+    /// Get a single memory by ID.
+    pub fn get_memory(&self, memory_id: &str) -> Result<Option<Memory>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, project_id, content, memory_type, source_session_id,
+                    confidence, access_count, created_at, updated_at, valid_until
+             FROM memories WHERE id = ?",
+        )?;
+        let mut rows = stmt.query(params![memory_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(Memory {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                content: row.get(2)?,
+                memory_type: row.get(3)?,
+                source_session_id: row.get(4)?,
+                confidence: row.get(5)?,
+                access_count: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                valid_until: row.get(9)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get a single fact by ID.
+    pub fn get_fact(&self, fact_id: &str) -> Result<Option<Fact>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT id, project_id, subject, predicate, object, confidence,
+                    source_session_id, source_agent, valid_at, invalid_at,
+                    superseded_by, created_at
+             FROM facts WHERE id = ?",
+        )?;
+        let mut rows = stmt.query(params![fact_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(Fact {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                subject: row.get(2)?,
+                predicate: row.get(3)?,
+                object: row.get(4)?,
+                confidence: row.get(5)?,
+                source_session_id: row.get(6)?,
+                source_agent: row.get(7)?,
+                valid_at: row.get(8)?,
+                invalid_at: row.get(9)?,
+                superseded_by: row.get(10)?,
+                created_at: row.get(11)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Upsert a project record.
+    pub fn upsert_project(&self, id: &str, name: &str, path: &str) -> Result<()> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        conn.execute(
+            "INSERT INTO projects (id, name, path, updated_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT (id) DO UPDATE SET
+                name = excluded.name,
+                path = excluded.path,
+                updated_at = excluded.updated_at",
+            params![id, name, path, Utc::now().naive_utc()],
+        )
+        .context("failed to upsert project")?;
+        Ok(())
+    }
+
+    /// Upsert file stats (change_frequency increments on each call).
+    pub fn upsert_file_stat(&self, file_path: &str, project_id: &str) -> Result<()> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        conn.execute(
+            "INSERT INTO file_stats (file_path, project_id, change_frequency, last_modified)
+             VALUES (?, ?, 1, ?)
+             ON CONFLICT (file_path, project_id) DO UPDATE SET
+                change_frequency = file_stats.change_frequency + 1,
+                last_modified = excluded.last_modified",
+            params![file_path, project_id, Utc::now().naive_utc()],
+        )
+        .context("failed to upsert file_stat")?;
+        Ok(())
+    }
+
+    /// Get hot files (most frequently changed) for a project.
+    pub fn get_hot_files(&self, project: Option<&str>, limit: usize) -> Result<Vec<(String, i32)>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        let mut result = Vec::new();
+
+        if let Some(proj) = project {
+            let mut stmt = conn.prepare(
+                "SELECT file_path, change_frequency FROM file_stats WHERE project_id = ? ORDER BY change_frequency DESC LIMIT ?"
+            )?;
+            let rows = stmt.query_map(params![proj, limit as i64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
+            })?;
+            for row in rows {
+                result.push(row?);
+            }
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT file_path, change_frequency FROM file_stats ORDER BY change_frequency DESC LIMIT ?"
+            )?;
+            let rows = stmt.query_map(params![limit as i64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
+            })?;
+            for row in rows {
+                result.push(row?);
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Insert a fact record.
+    pub fn insert_fact(&self, fact: &Fact) -> Result<()> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        conn.execute(
+            "INSERT INTO facts (
+                id, project_id, subject, predicate, object, confidence,
+                source_session_id, source_agent, valid_at, invalid_at,
+                superseded_by, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                fact.id,
+                fact.project_id,
+                fact.subject,
+                fact.predicate,
+                fact.object,
+                fact.confidence,
+                fact.source_session_id,
+                fact.source_agent,
+                fact.valid_at.unwrap_or_else(|| Utc::now().naive_utc()),
+                fact.invalid_at,
+                fact.superseded_by,
+                fact.created_at.unwrap_or_else(|| Utc::now().naive_utc()),
+            ],
+        )
+        .context("failed to insert fact")?;
+        Ok(())
+    }
+
+    /// Invalidate a fact by setting `invalid_at` and optionally linking to successor.
+    pub fn invalidate_fact(&self, fact_id: &str, superseded_by: Option<&str>) -> Result<bool> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        let now = Utc::now().naive_utc();
+        let affected = conn
+            .execute(
+                "UPDATE facts SET invalid_at = ?, superseded_by = ?
+                 WHERE id = ? AND invalid_at IS NULL",
+                params![now, superseded_by, fact_id],
+            )
+            .context("failed to invalidate fact")?;
+        Ok(affected > 0)
+    }
+
+    /// Insert a new fact, automatically invalidating any contradicting facts
+    /// (same subject + predicate + project, still valid).
+    pub fn upsert_fact(&self, fact: &Fact) -> Result<()> {
+        // Find existing valid facts with the same subject+predicate
+        let existing = self.get_active_facts_for_subject(
+            &fact.subject,
+            &fact.predicate,
+            fact.project_id.as_deref(),
+        )?;
+
+        // Invalidate contradicting facts (different object value)
+        for old in &existing {
+            if old.object != fact.object {
+                self.invalidate_fact(&old.id, Some(&fact.id))?;
+            }
+        }
+
+        // If an identical fact already exists and is valid, skip insertion
+        if existing.iter().any(|f| f.object == fact.object) {
+            return Ok(());
+        }
+
+        self.insert_fact(fact)
+    }
+
+    /// Get all currently valid facts (invalid_at IS NULL).
+    pub fn get_active_facts(&self, project: Option<&str>, limit: usize) -> Result<Vec<Fact>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+
+        let (sql, use_project) = if project.is_some() {
+            (
+                "SELECT id, project_id, subject, predicate, object, confidence,
+                        source_session_id, source_agent, valid_at, invalid_at,
+                        superseded_by, created_at
+                 FROM facts
+                 WHERE invalid_at IS NULL AND project_id ILIKE ?
+                 ORDER BY valid_at DESC NULLS LAST
+                 LIMIT ?",
+                true,
+            )
+        } else {
+            (
+                "SELECT id, project_id, subject, predicate, object, confidence,
+                        source_session_id, source_agent, valid_at, invalid_at,
+                        superseded_by, created_at
+                 FROM facts
+                 WHERE invalid_at IS NULL
+                 ORDER BY valid_at DESC NULLS LAST
+                 LIMIT ?",
+                false,
+            )
+        };
+
+        let mut stmt = conn
+            .prepare(sql)
+            .context("failed to prepare get_active_facts")?;
+
+        let map_row = |row: &duckdb::Row| -> duckdb::Result<Fact> {
+            Ok(Fact {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                subject: row.get(2)?,
+                predicate: row.get(3)?,
+                object: row.get(4)?,
+                confidence: row.get::<_, f32>(5).unwrap_or(1.0),
+                source_session_id: row.get(6)?,
+                source_agent: row.get(7)?,
+                valid_at: row.get(8)?,
+                invalid_at: row.get(9)?,
+                superseded_by: row.get(10)?,
+                created_at: row.get(11)?,
+            })
+        };
+
+        let rows = if use_project {
+            let pattern = format!("%{}%", project.unwrap());
+            stmt.query_map(params![pattern, limit as i64], map_row)
+                .context("failed to query active facts")?
+        } else {
+            stmt.query_map(params![limit as i64], map_row)
+                .context("failed to query active facts")?
+        };
+
+        let mut facts = Vec::new();
+        for row in rows {
+            facts.push(row.context("failed to read fact row")?);
+        }
+        Ok(facts)
+    }
+
+    /// Get active facts for a specific subject and predicate.
+    fn get_active_facts_for_subject(
+        &self,
+        subject: &str,
+        predicate: &str,
+        project: Option<&str>,
+    ) -> Result<Vec<Fact>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+
+        let (sql, params_vec): (&str, Vec<Box<dyn duckdb::ToSql>>) = if let Some(proj) = project {
+            (
+                "SELECT id, project_id, subject, predicate, object, confidence,
+                        source_session_id, source_agent, valid_at, invalid_at,
+                        superseded_by, created_at
+                 FROM facts
+                 WHERE invalid_at IS NULL AND subject = ? AND predicate = ? AND project_id = ?",
+                vec![
+                    Box::new(subject.to_string()),
+                    Box::new(predicate.to_string()),
+                    Box::new(proj.to_string()),
+                ],
+            )
+        } else {
+            (
+                "SELECT id, project_id, subject, predicate, object, confidence,
+                        source_session_id, source_agent, valid_at, invalid_at,
+                        superseded_by, created_at
+                 FROM facts
+                 WHERE invalid_at IS NULL AND subject = ? AND predicate = ?",
+                vec![
+                    Box::new(subject.to_string()),
+                    Box::new(predicate.to_string()),
+                ],
+            )
+        };
+
+        let params_ref: Vec<&dyn duckdb::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn
+            .prepare(sql)
+            .context("failed to prepare subject facts query")?;
+
+        let rows = stmt
+            .query_map(params_ref.as_slice(), |row| {
+                Ok(Fact {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    subject: row.get(2)?,
+                    predicate: row.get(3)?,
+                    object: row.get(4)?,
+                    confidence: row.get::<_, f32>(5).unwrap_or(1.0),
+                    source_session_id: row.get(6)?,
+                    source_agent: row.get(7)?,
+                    valid_at: row.get(8)?,
+                    invalid_at: row.get(9)?,
+                    superseded_by: row.get(10)?,
+                    created_at: row.get(11)?,
+                })
+            })
+            .context("failed to query subject facts")?;
+
+        let mut facts = Vec::new();
+        for row in rows {
+            facts.push(row.context("failed to read fact row")?);
+        }
+        Ok(facts)
+    }
+
+    /// Search facts by subject or object text (ILIKE).
+    pub fn search_facts(&self, query: &str) -> Result<Vec<Fact>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        let pattern = format!("%{query}%");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, project_id, subject, predicate, object, confidence,
+                        source_session_id, source_agent, valid_at, invalid_at,
+                        superseded_by, created_at
+                 FROM facts
+                 WHERE (subject ILIKE ? OR object ILIKE ?)
+                 ORDER BY invalid_at IS NULL DESC, valid_at DESC NULLS LAST",
+            )
+            .context("failed to prepare search_facts")?;
+
+        let rows = stmt
+            .query_map(params![pattern, pattern], |row| {
+                Ok(Fact {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    subject: row.get(2)?,
+                    predicate: row.get(3)?,
+                    object: row.get(4)?,
+                    confidence: row.get::<_, f32>(5).unwrap_or(1.0),
+                    source_session_id: row.get(6)?,
+                    source_agent: row.get(7)?,
+                    valid_at: row.get(8)?,
+                    invalid_at: row.get(9)?,
+                    superseded_by: row.get(10)?,
+                    created_at: row.get(11)?,
+                })
+            })
+            .context("failed to query facts")?;
+
+        let mut facts = Vec::new();
+        for row in rows {
+            facts.push(row.context("failed to read fact row")?);
+        }
+        Ok(facts)
+    }
+
+    /// Get the full temporal history for a subject (all facts, including invalidated).
+    pub fn get_fact_history(&self, subject: &str) -> Result<Vec<Fact>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, project_id, subject, predicate, object, confidence,
+                        source_session_id, source_agent, valid_at, invalid_at,
+                        superseded_by, created_at
+                 FROM facts
+                 WHERE subject = ?
+                 ORDER BY valid_at ASC NULLS LAST",
+            )
+            .context("failed to prepare get_fact_history")?;
+
+        let rows = stmt
+            .query_map(params![subject], |row| {
+                Ok(Fact {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    subject: row.get(2)?,
+                    predicate: row.get(3)?,
+                    object: row.get(4)?,
+                    confidence: row.get::<_, f32>(5).unwrap_or(1.0),
+                    source_session_id: row.get(6)?,
+                    source_agent: row.get(7)?,
+                    valid_at: row.get(8)?,
+                    invalid_at: row.get(9)?,
+                    superseded_by: row.get(10)?,
+                    created_at: row.get(11)?,
+                })
+            })
+            .context("failed to query fact history")?;
+
+        let mut facts = Vec::new();
+        for row in rows {
+            facts.push(row.context("failed to read fact row")?);
+        }
+        Ok(facts)
+    }
+
+    /// Count facts in the database.
+    pub fn count_facts(&self) -> Result<usize> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM facts", [], |row| row.get(0))
+            .context("failed to count facts")?;
+        Ok(count as usize)
+    }
+
+    /// Count currently valid facts.
+    pub fn count_active_facts(&self) -> Result<usize> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM facts WHERE invalid_at IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .context("failed to count active facts")?;
+        Ok(count as usize)
     }
 
     /// Insert a code symbol record.
@@ -1083,7 +1610,11 @@ impl DuckStore {
     // -----------------------------------------------------------------------
 
     /// Get all symbols for a project.
-    pub fn get_symbols_for_project(&self, project_id: &str, limit: usize) -> Result<Vec<CodeSymbol>> {
+    pub fn get_symbols_for_project(
+        &self,
+        project_id: &str,
+        limit: usize,
+    ) -> Result<Vec<CodeSymbol>> {
         let conn = self.conn.lock().expect("lock poisoned");
         let mut stmt = conn
             .prepare(
@@ -1175,7 +1706,11 @@ impl DuckStore {
     }
 
     /// Get callers of a symbol (dependencies where this symbol is the target).
-    pub fn get_callers_of(&self, symbol_name: &str, project_id: &str) -> Result<Vec<CodeDependency>> {
+    pub fn get_callers_of(
+        &self,
+        symbol_name: &str,
+        project_id: &str,
+    ) -> Result<Vec<CodeDependency>> {
         let conn = self.conn.lock().expect("lock poisoned");
         let mut stmt = conn
             .prepare(
@@ -1208,7 +1743,11 @@ impl DuckStore {
     }
 
     /// Get callees of a symbol (dependencies where this symbol is the source).
-    pub fn get_callees_of(&self, symbol_name: &str, project_id: &str) -> Result<Vec<CodeDependency>> {
+    pub fn get_callees_of(
+        &self,
+        symbol_name: &str,
+        project_id: &str,
+    ) -> Result<Vec<CodeDependency>> {
         let conn = self.conn.lock().expect("lock poisoned");
         let mut stmt = conn
             .prepare(
@@ -1241,7 +1780,11 @@ impl DuckStore {
     }
 
     /// Get all symbols in a specific file.
-    pub fn get_symbols_in_file(&self, file_path: &str, project_id: &str) -> Result<Vec<CodeSymbol>> {
+    pub fn get_symbols_in_file(
+        &self,
+        file_path: &str,
+        project_id: &str,
+    ) -> Result<Vec<CodeSymbol>> {
         let conn = self.conn.lock().expect("lock poisoned");
         let mut stmt = conn
             .prepare(
@@ -1298,7 +1841,9 @@ impl DuckStore {
     pub fn count_dependencies(&self) -> Result<usize> {
         let conn = self.conn.lock().expect("lock poisoned");
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM code_dependencies", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM code_dependencies", [], |row| {
+                row.get(0)
+            })
             .context("failed to count dependencies")?;
         Ok(count as usize)
     }
@@ -1504,7 +2049,9 @@ impl DuckStore {
             )
         };
 
-        let mut stmt = conn.prepare(sql).context("failed to prepare neighbor query")?;
+        let mut stmt = conn
+            .prepare(sql)
+            .context("failed to prepare neighbor query")?;
 
         let map_row = |row: &duckdb::Row| -> duckdb::Result<GraphNeighborRow> {
             Ok(GraphNeighborRow {
@@ -1621,9 +2168,8 @@ impl DuckStore {
                 Ok(ids)
             }
             Err(duckdb::Error::QueryReturnedNoRows) => Ok(Vec::new()),
-            Err(e) => Err(anyhow::Error::new(e).context(
-                "DuckPGQ shortest_path query failed — ensure init_graph() was called",
-            )),
+            Err(e) => Err(anyhow::Error::new(e)
+                .context("DuckPGQ shortest_path query failed — ensure init_graph() was called")),
         }
     }
 
@@ -1646,9 +2192,7 @@ impl DuckStore {
                  ORDER BY pagerank_score DESC
                  LIMIT ?",
             )
-            .context(
-                "DuckPGQ pagerank query failed — ensure init_graph() was called",
-            )?;
+            .context("DuckPGQ pagerank query failed — ensure init_graph() was called")?;
 
         let rows = stmt
             .query_map(params![limit as i64], |row| {
@@ -1687,9 +2231,9 @@ impl DuckStore {
              )"
         };
 
-        let mut stmt = conn.prepare(sql).context(
-            "DuckPGQ pattern_match query failed — ensure init_graph() was called",
-        )?;
+        let mut stmt = conn
+            .prepare(sql)
+            .context("DuckPGQ pattern_match query failed — ensure init_graph() was called")?;
 
         let map_row = |row: &duckdb::Row| -> duckdb::Result<GraphNodeRow> {
             Ok(GraphNodeRow {
@@ -1861,7 +2405,10 @@ mod tests {
             .insert_graph_node("n1", "CodeEntity", "authenticate", r#"{"lang":"rust"}"#)
             .unwrap();
 
-        let node = store.get_graph_node("n1").unwrap().expect("node should exist");
+        let node = store
+            .get_graph_node("n1")
+            .unwrap()
+            .expect("node should exist");
         assert_eq!(node.id, "n1");
         assert_eq!(node.kind, "CodeEntity");
         assert_eq!(node.name, "authenticate");
@@ -1892,8 +2439,12 @@ mod tests {
     #[test]
     fn test_graph_insert_edge_and_neighbors() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_graph_node("a", "CodeEntity", "foo", "{}").unwrap();
-        store.insert_graph_node("b", "CodeEntity", "bar", "{}").unwrap();
+        store
+            .insert_graph_node("a", "CodeEntity", "foo", "{}")
+            .unwrap();
+        store
+            .insert_graph_node("b", "CodeEntity", "bar", "{}")
+            .unwrap();
         store.insert_graph_edge("a", "b", "CALLS", "{}").unwrap();
 
         // Outgoing from a
@@ -1913,8 +2464,12 @@ mod tests {
     #[test]
     fn test_graph_neighbor_edge_kind_filter() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_graph_node("a", "CodeEntity", "foo", "{}").unwrap();
-        store.insert_graph_node("b", "CodeEntity", "bar", "{}").unwrap();
+        store
+            .insert_graph_node("a", "CodeEntity", "foo", "{}")
+            .unwrap();
+        store
+            .insert_graph_node("b", "CodeEntity", "bar", "{}")
+            .unwrap();
         store.insert_graph_node("c", "Module", "baz", "{}").unwrap();
 
         store.insert_graph_edge("a", "b", "CALLS", "{}").unwrap();
@@ -1932,8 +2487,12 @@ mod tests {
     #[test]
     fn test_graph_duplicate_edge_ignored() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_graph_node("a", "CodeEntity", "foo", "{}").unwrap();
-        store.insert_graph_node("b", "CodeEntity", "bar", "{}").unwrap();
+        store
+            .insert_graph_node("a", "CodeEntity", "foo", "{}")
+            .unwrap();
+        store
+            .insert_graph_node("b", "CodeEntity", "bar", "{}")
+            .unwrap();
 
         store.insert_graph_edge("a", "b", "CALLS", "{}").unwrap();
         store.insert_graph_edge("a", "b", "CALLS", "{}").unwrap(); // duplicate
@@ -1944,9 +2503,15 @@ mod tests {
     #[test]
     fn test_graph_delete_node_cascades_edges() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_graph_node("a", "CodeEntity", "foo", "{}").unwrap();
-        store.insert_graph_node("b", "CodeEntity", "bar", "{}").unwrap();
-        store.insert_graph_node("c", "CodeEntity", "baz", "{}").unwrap();
+        store
+            .insert_graph_node("a", "CodeEntity", "foo", "{}")
+            .unwrap();
+        store
+            .insert_graph_node("b", "CodeEntity", "bar", "{}")
+            .unwrap();
+        store
+            .insert_graph_node("c", "CodeEntity", "baz", "{}")
+            .unwrap();
 
         store.insert_graph_edge("a", "b", "CALLS", "{}").unwrap();
         store.insert_graph_edge("c", "a", "IMPORTS", "{}").unwrap();
@@ -1968,9 +2533,13 @@ mod tests {
         assert_eq!(store.count_graph_nodes().unwrap(), 0);
         assert_eq!(store.count_graph_edges().unwrap(), 0);
 
-        store.insert_graph_node("a", "Concept", "auth", "{}").unwrap();
+        store
+            .insert_graph_node("a", "Concept", "auth", "{}")
+            .unwrap();
         store.insert_graph_node("b", "Concept", "db", "{}").unwrap();
-        store.insert_graph_edge("a", "b", "RELATES_TO", "{}").unwrap();
+        store
+            .insert_graph_edge("a", "b", "RELATES_TO", "{}")
+            .unwrap();
 
         assert_eq!(store.count_graph_nodes().unwrap(), 2);
         assert_eq!(store.count_graph_edges().unwrap(), 1);
@@ -1979,13 +2548,201 @@ mod tests {
     #[test]
     fn test_graph_clear() {
         let store = DuckStore::open_in_memory().unwrap();
-        store.insert_graph_node("a", "Concept", "auth", "{}").unwrap();
+        store
+            .insert_graph_node("a", "Concept", "auth", "{}")
+            .unwrap();
         store.insert_graph_node("b", "Concept", "db", "{}").unwrap();
-        store.insert_graph_edge("a", "b", "RELATES_TO", "{}").unwrap();
+        store
+            .insert_graph_edge("a", "b", "RELATES_TO", "{}")
+            .unwrap();
 
         store.clear_graph().unwrap();
 
         assert_eq!(store.count_graph_nodes().unwrap(), 0);
         assert_eq!(store.count_graph_edges().unwrap(), 0);
+    }
+
+    // -------------------------------------------------------------------
+    // Facts (temporal knowledge graph) tests
+    // -------------------------------------------------------------------
+
+    fn make_fact(id: &str, subject: &str, predicate: &str, object: &str) -> Fact {
+        Fact {
+            id: id.to_string(),
+            project_id: Some("proj-1".into()),
+            subject: subject.to_string(),
+            predicate: predicate.to_string(),
+            object: object.to_string(),
+            confidence: 0.9,
+            source_session_id: Some("s-1".into()),
+            source_agent: Some("claude".into()),
+            valid_at: Some(Utc::now().naive_utc()),
+            invalid_at: None,
+            superseded_by: None,
+            created_at: Some(Utc::now().naive_utc()),
+        }
+    }
+
+    #[test]
+    fn test_insert_and_get_facts() {
+        let store = DuckStore::open_in_memory().unwrap();
+        store
+            .insert_fact(&make_fact("f-1", "auth", "uses", "JWT"))
+            .unwrap();
+        store
+            .insert_fact(&make_fact("f-2", "db", "uses", "DuckDB"))
+            .unwrap();
+
+        let facts = store.get_active_facts(None, 100).unwrap();
+        assert_eq!(facts.len(), 2);
+        assert_eq!(store.count_facts().unwrap(), 2);
+        assert_eq!(store.count_active_facts().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_invalidate_fact() {
+        let store = DuckStore::open_in_memory().unwrap();
+        store
+            .insert_fact(&make_fact("f-1", "auth", "uses", "JWT"))
+            .unwrap();
+
+        assert!(store.invalidate_fact("f-1", Some("f-2")).unwrap());
+        assert_eq!(store.count_active_facts().unwrap(), 0);
+        assert_eq!(store.count_facts().unwrap(), 1); // still exists, just invalidated
+
+        // Can't invalidate twice
+        assert!(!store.invalidate_fact("f-1", None).unwrap());
+    }
+
+    #[test]
+    fn test_upsert_fact_supersedes_contradicting() {
+        let store = DuckStore::open_in_memory().unwrap();
+        // Insert original fact: auth uses JWT
+        store
+            .insert_fact(&make_fact("f-1", "auth", "uses", "JWT"))
+            .unwrap();
+
+        // Upsert contradicting fact: auth uses OAuth2
+        store
+            .upsert_fact(&make_fact("f-2", "auth", "uses", "OAuth2"))
+            .unwrap();
+
+        // Old fact should be invalidated, new fact should be active
+        let active = store.get_active_facts(None, 100).unwrap();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].object, "OAuth2");
+
+        // Total facts should be 2 (history preserved)
+        assert_eq!(store.count_facts().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_upsert_fact_skips_duplicate() {
+        let store = DuckStore::open_in_memory().unwrap();
+        store
+            .insert_fact(&make_fact("f-1", "auth", "uses", "JWT"))
+            .unwrap();
+
+        // Upsert same fact (same subject+predicate+object)
+        store
+            .upsert_fact(&make_fact("f-2", "auth", "uses", "JWT"))
+            .unwrap();
+
+        // Should still be 1 fact (duplicate skipped)
+        assert_eq!(store.count_facts().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_search_facts() {
+        let store = DuckStore::open_in_memory().unwrap();
+        store
+            .insert_fact(&make_fact("f-1", "auth module", "uses", "JWT tokens"))
+            .unwrap();
+        store
+            .insert_fact(&make_fact("f-2", "db layer", "uses", "DuckDB"))
+            .unwrap();
+
+        let results = store.search_facts("auth").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].subject, "auth module");
+
+        let results = store.search_facts("DuckDB").unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_update_and_delete_memory() {
+        let store = DuckStore::open_in_memory().unwrap();
+        let mem = Memory {
+            id: "m-upd".into(),
+            project_id: None,
+            content: "original content".into(),
+            memory_type: Some("note".into()),
+            source_session_id: None,
+            confidence: 0.8,
+            access_count: 0,
+            created_at: Some(Utc::now().naive_utc()),
+            updated_at: Some(Utc::now().naive_utc()),
+            valid_until: None,
+        };
+        store.insert_memory(&mem).unwrap();
+
+        // Update content
+        assert!(
+            store
+                .update_memory("m-upd", Some("revised content"), None)
+                .unwrap()
+        );
+        let fetched = store.get_memory("m-upd").unwrap().unwrap();
+        assert_eq!(fetched.content, "revised content");
+        assert_eq!(fetched.confidence, 0.8); // unchanged
+
+        // Update confidence
+        assert!(store.update_memory("m-upd", None, Some(0.95)).unwrap());
+        let fetched = store.get_memory("m-upd").unwrap().unwrap();
+        assert_eq!(fetched.confidence, 0.95);
+
+        // Update nonexistent
+        assert!(!store.update_memory("nope", Some("x"), None).unwrap());
+
+        // Delete
+        assert!(store.delete_memory("m-upd").unwrap());
+        assert!(store.get_memory("m-upd").unwrap().is_none());
+        assert!(!store.delete_memory("m-upd").unwrap()); // already gone
+    }
+
+    #[test]
+    fn test_get_and_delete_fact() {
+        let store = DuckStore::open_in_memory().unwrap();
+        store
+            .insert_fact(&make_fact("f-del", "auth", "uses", "JWT"))
+            .unwrap();
+
+        let fact = store.get_fact("f-del").unwrap().unwrap();
+        assert_eq!(fact.subject, "auth");
+
+        assert!(store.delete_fact("f-del").unwrap());
+        assert!(store.get_fact("f-del").unwrap().is_none());
+        assert!(!store.delete_fact("f-del").unwrap());
+    }
+
+    #[test]
+    fn test_fact_history() {
+        let store = DuckStore::open_in_memory().unwrap();
+        store
+            .insert_fact(&make_fact("f-1", "auth", "uses", "JWT"))
+            .unwrap();
+        store.invalidate_fact("f-1", Some("f-2")).unwrap();
+        store
+            .insert_fact(&make_fact("f-2", "auth", "uses", "OAuth2"))
+            .unwrap();
+
+        let history = store.get_fact_history("auth").unwrap();
+        assert_eq!(history.len(), 2);
+        // First should be the older one (sorted by valid_at ASC)
+        assert_eq!(history[0].object, "JWT");
+        assert!(history[0].invalid_at.is_some());
+        assert_eq!(history[1].object, "OAuth2");
+        assert!(history[1].invalid_at.is_none());
     }
 }

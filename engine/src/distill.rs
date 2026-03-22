@@ -7,7 +7,7 @@ use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 use crate::config::{DistillationConfig, DistillationLevel};
-use crate::store::duckdb::{Decision, Memory, Session};
+use crate::store::duckdb::{Decision, Fact, Memory, Session};
 
 // ---------------------------------------------------------------------------
 // LLM Client (OpenAI-compatible, works with LM Studio)
@@ -132,7 +132,16 @@ pub struct DistilledSession {
     pub problems: Vec<ExtractedProblem>,
     pub patterns: Vec<ExtractedPattern>,
     pub entities: Vec<ExtractedEntity>,
+    pub facts: Vec<ExtractedFact>,
     pub key_insights: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractedFact {
+    pub subject: String,
+    pub predicate: String,
+    pub object: String,
+    pub confidence: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,7 +189,18 @@ struct LlmExtraction {
     #[serde(default)]
     entities: Vec<LlmEntity>,
     #[serde(default)]
+    facts: Vec<LlmFact>,
+    #[serde(default)]
     key_insights: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LlmFact {
+    subject: String,
+    predicate: String,
+    object: String,
+    #[serde(default)]
+    confidence: Option<f32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -307,6 +327,7 @@ impl Distiller {
         let decisions = Self::extract_decisions(text);
         let problems = Self::extract_problems(text);
         let patterns = Self::extract_patterns(text);
+        let facts = Self::extract_facts(text, &entities);
 
         DistilledSession {
             session_id: session_id.to_string(),
@@ -314,6 +335,7 @@ impl Distiller {
             problems,
             patterns,
             entities,
+            facts,
             key_insights: Vec::new(),
         }
     }
@@ -340,7 +362,9 @@ impl Distiller {
              1. Key decisions made (what was decided and why)\n\
              2. Problems encountered and their solutions\n\
              3. Notable patterns or conventions established\n\
-             4. Important code entities (files, functions, classes)\n\n\
+             4. Important code entities (files, functions, classes)\n\
+             5. Factual knowledge as subject-predicate-object triples \
+                (e.g. {{\"subject\": \"auth module\", \"predicate\": \"uses\", \"object\": \"JWT tokens\"}})\n\n\
              Transcript:\n{truncated}\n\n\
              Respond with JSON:\n\
              {{\"decisions\": [{{\"what\": \"...\", \"why\": \"...\", \"alternatives\": [...]}}], \
@@ -349,6 +373,7 @@ impl Distiller {
              \"patterns\": [{{\"name\": \"...\", \"description\": \"...\"}}], \
              \"entities\": [{{\"name\": \"...\", \
              \"entity_type\": \"function|file|class|module\", \"context\": \"...\"}}], \
+             \"facts\": [{{\"subject\": \"...\", \"predicate\": \"...\", \"object\": \"...\"}}], \
              \"key_insights\": [\"...\"]}}"
         );
 
@@ -402,6 +427,16 @@ impl Distiller {
                     name: e.name,
                     entity_type: e.entity_type,
                     context: e.context,
+                })
+                .collect(),
+            facts: extraction
+                .facts
+                .into_iter()
+                .map(|f| ExtractedFact {
+                    subject: f.subject,
+                    predicate: f.predicate,
+                    object: f.object,
+                    confidence: f.confidence,
                 })
                 .collect(),
             key_insights: extraction.key_insights,
@@ -510,6 +545,28 @@ impl Distiller {
         }
 
         memories
+    }
+
+    /// Convert distilled facts into DuckDB `Fact` records with temporal windows.
+    pub fn to_facts(&self, distilled: &DistilledSession, agent: Option<&str>) -> Vec<Fact> {
+        distilled
+            .facts
+            .iter()
+            .map(|f| Fact {
+                id: Uuid::new_v4().to_string(),
+                project_id: None,
+                subject: f.subject.clone(),
+                predicate: f.predicate.clone(),
+                object: f.object.clone(),
+                confidence: f.confidence.unwrap_or(0.8),
+                source_session_id: Some(distilled.session_id.clone()),
+                source_agent: agent.map(|s| s.to_string()),
+                valid_at: None, // Will default to now
+                invalid_at: None,
+                superseded_by: None,
+                created_at: None,
+            })
+            .collect()
     }
 
     /// Filter noise: skip trivial messages, failed commands, duplicate content.
@@ -687,6 +744,59 @@ impl Distiller {
         }
 
         problems
+    }
+
+    /// Extract subject-predicate-object facts from text and entities.
+    fn extract_facts(text: &str, entities: &[ExtractedEntity]) -> Vec<ExtractedFact> {
+        let mut facts = Vec::new();
+        let mut seen = HashSet::new();
+
+        // Generate facts from entities: "X is_a function/file/class"
+        for entity in entities {
+            let key = format!("{}:is_a:{}", entity.name, entity.entity_type);
+            if seen.insert(key) {
+                facts.push(ExtractedFact {
+                    subject: entity.name.clone(),
+                    predicate: "is_a".to_string(),
+                    object: entity.entity_type.clone(),
+                    confidence: Some(0.9),
+                });
+            }
+        }
+
+        // Extract "X uses Y" patterns
+        let uses_re =
+            Regex::new(r"(?i)(?:using|uses|use)\s+([a-zA-Z_][a-zA-Z0-9_.-]+)").expect("uses regex");
+        for cap in uses_re.captures_iter(text) {
+            let obj = cap[1].to_string();
+            let key = format!("project:uses:{obj}");
+            if seen.insert(key) {
+                facts.push(ExtractedFact {
+                    subject: "project".to_string(),
+                    predicate: "uses".to_string(),
+                    object: obj,
+                    confidence: Some(0.7),
+                });
+            }
+        }
+
+        // Extract "X depends on Y" patterns
+        let depends_re =
+            Regex::new(r"(?i)depends?\s+on\s+([a-zA-Z_][a-zA-Z0-9_.-]+)").expect("depends regex");
+        for cap in depends_re.captures_iter(text) {
+            let obj = cap[1].to_string();
+            let key = format!("project:depends_on:{obj}");
+            if seen.insert(key) {
+                facts.push(ExtractedFact {
+                    subject: "project".to_string(),
+                    predicate: "depends_on".to_string(),
+                    object: obj,
+                    confidence: Some(0.7),
+                });
+            }
+        }
+
+        facts
     }
 
     fn extract_patterns(text: &str) -> Vec<ExtractedPattern> {
@@ -928,6 +1038,7 @@ mod tests {
             problems: vec![],
             patterns: vec![],
             entities: vec![],
+            facts: vec![],
             key_insights: vec![],
         };
 
@@ -972,6 +1083,7 @@ mod tests {
                 entity_type: "class".to_string(),
                 context: Some("handles structured storage".to_string()),
             }],
+            facts: vec![],
             key_insights: vec!["DuckDB is fast for analytics".to_string()],
         };
 

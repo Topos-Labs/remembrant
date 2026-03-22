@@ -272,7 +272,12 @@ impl RepoEmbedder {
     ///
     /// Splits a file into fixed-size chunks of `self.chunk_size` lines with
     /// `self.chunk_overlap` lines of overlap.
-    fn chunk_file_naive(&self, content: &str, rel_path: &str, language: Option<String>) -> Vec<CodeChunk> {
+    fn chunk_file_naive(
+        &self,
+        content: &str,
+        rel_path: &str,
+        language: Option<String>,
+    ) -> Vec<CodeChunk> {
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
 
@@ -340,7 +345,13 @@ impl RepoEmbedder {
     /// semantically meaningful chunks. Falls back to the naive chunker if the
     /// AST chunker produces no results.
     #[cfg(feature = "code-analysis")]
-    fn chunk_file_with_ast(&self, content: &str, path: &Path, rel_path: &str, language: Option<String>) -> Vec<CodeChunk> {
+    fn chunk_file_with_ast(
+        &self,
+        content: &str,
+        path: &Path,
+        rel_path: &str,
+        language: Option<String>,
+    ) -> Vec<CodeChunk> {
         // Build a minimal Infiniloom Repository with a single file for chunking.
         let repo_name = self
             .root
@@ -383,11 +394,12 @@ impl RepoEmbedder {
                 // Determine line range from the chunk content.
                 let line_count = chunk_content.lines().count();
                 // Find the start line within the original content.
-                let start_line = if let Some(pos) = content.find(chunk_content.lines().next().unwrap_or("")) {
-                    content[..pos].lines().count().max(1)
-                } else {
-                    1
-                };
+                let start_line =
+                    if let Some(pos) = content.find(chunk_content.lines().next().unwrap_or("")) {
+                        content[..pos].lines().count().max(1)
+                    } else {
+                        1
+                    };
                 let end_line = start_line + line_count.saturating_sub(1);
 
                 // Compute BLAKE3 content-addressable ID.
@@ -509,7 +521,7 @@ impl RepoEmbedder {
 
         // Embed in batches.
         let batch_size = batch_size.max(1);
-        let n_batches = (texts.len() + batch_size - 1) / batch_size;
+        let n_batches = texts.len().div_ceil(batch_size);
         info!(total_chunks, batch_size, n_batches, "embedding chunks");
 
         let mut all_vectors: Vec<Vec<f32>> = Vec::with_capacity(total_chunks);
@@ -892,7 +904,8 @@ mod code_analysis_tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
 
-        let content = "fn foo() {\n    println!(\"foo\");\n}\n\nfn bar() {\n    println!(\"bar\");\n}\n";
+        let content =
+            "fn foo() {\n    println!(\"foo\");\n}\n\nfn bar() {\n    println!(\"bar\");\n}\n";
         fs::write(root.join("funcs.rs"), content).unwrap();
 
         let embedder = RepoEmbedder::new(root);
@@ -905,7 +918,10 @@ mod code_analysis_tests {
 
         assert!(!chunks.is_empty(), "AST chunker should produce chunks");
         for chunk in &chunks {
-            assert!(chunk.blake3_id.is_some(), "AST chunks should have BLAKE3 IDs");
+            assert!(
+                chunk.blake3_id.is_some(),
+                "AST chunks should have BLAKE3 IDs"
+            );
             assert_eq!(chunk.blake3_id.as_ref().unwrap().len(), 64);
         }
     }

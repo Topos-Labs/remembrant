@@ -190,6 +190,7 @@ impl LanceStore {
     // -----------------------------------------------------------------------
 
     /// Insert a single code embedding record.
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert_code_embedding(
         &self,
         id: &str,
@@ -442,7 +443,8 @@ impl LanceStore {
         query_embedding: &[f32],
         limit: usize,
     ) -> Result<Vec<SymbolSearchResult>> {
-        self.search_symbols_internal(query_embedding, limit, None).await
+        self.search_symbols_internal(query_embedding, limit, None)
+            .await
     }
 
     /// Search symbol embeddings filtered by symbol kind.
@@ -453,7 +455,8 @@ impl LanceStore {
         limit: usize,
     ) -> Result<Vec<SymbolSearchResult>> {
         let filter = format!("symbol_kind = '{}'", kind.replace('\'', "''"));
-        self.search_symbols_internal(query_embedding, limit, Some(&filter)).await
+        self.search_symbols_internal(query_embedding, limit, Some(&filter))
+            .await
     }
 
     /// Search symbol embeddings filtered by project ID.
@@ -464,7 +467,8 @@ impl LanceStore {
         limit: usize,
     ) -> Result<Vec<SymbolSearchResult>> {
         let filter = format!("project_id = '{}'", project_id.replace('\'', "''"));
-        self.search_symbols_internal(query_embedding, limit, Some(&filter)).await
+        self.search_symbols_internal(query_embedding, limit, Some(&filter))
+            .await
     }
 
     /// Internal helper for symbol search with optional filter.
@@ -583,13 +587,8 @@ impl LanceStore {
                             Some(a.value(i).to_string())
                         }
                     }),
-                    pagerank: pageranks.and_then(|a| {
-                        if a.is_null(i) {
-                            None
-                        } else {
-                            Some(a.value(i))
-                        }
-                    }),
+                    pagerank: pageranks
+                        .and_then(|a| if a.is_null(i) { None } else { Some(a.value(i)) }),
                     start_line: start_lines.value(i),
                     end_line: end_lines.value(i),
                     distance: distances.map(|d| d.value(i)).unwrap_or(f32::MAX),

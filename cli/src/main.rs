@@ -1,18 +1,29 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use axum::{
+    Router,
+    extract::{Path as AxumPath, Query, State},
+    http::StatusCode,
+    response::Html,
+    routing::get,
+};
 use chrono::NaiveDateTime;
 use clap::{Parser, Subcommand};
+mod mcp_server;
+
 use remembrant_engine::distill::Distiller;
 use remembrant_engine::embed_pipeline::EmbedPipeline;
 use remembrant_engine::embedding::{EmbedProvider, LmStudioEmbedder};
 use remembrant_engine::graph_builder::{self, GraphBackend, GraphBuilder};
 use remembrant_engine::repo_embed::RepoEmbedder;
-use remembrant_engine::store::{DuckStore, LanceStore};
 #[cfg(feature = "code-analysis")]
 use remembrant_engine::store::GraphStoreBackend;
+use remembrant_engine::store::{DuckStore, LanceStore};
 use remembrant_engine::{AppConfig, ClaudeIngester, CodexIngester, GeminiIngester, detect_agents};
+use tower_http::cors::CorsLayer;
 
 #[derive(Parser)]
 #[command(
@@ -60,6 +71,10 @@ enum Commands {
         /// Use exact matching instead of semantic
         #[arg(long)]
         exact: bool,
+
+        /// Output as JSON (for agent consumption)
+        #[arg(long)]
+        json: bool,
     },
 
     /// Exact text match
@@ -92,6 +107,51 @@ enum Commands {
         /// Only show today's activity
         #[arg(long)]
         today: bool,
+
+        /// Output as JSON (for agent consumption)
+        #[arg(long)]
+        json: bool,
+
+        /// LLM-optimized compact context block
+        #[arg(long)]
+        for_agent: bool,
+
+        /// Max tokens for agent context (default: 1000)
+        #[arg(long, default_value_t = 1000)]
+        max_tokens: usize,
+    },
+
+    /// Topic-specific context assembly for agents
+    Context {
+        /// Topic to assemble context for
+        topic: String,
+
+        /// Filter by project
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Output as JSON instead of prompt block
+        #[arg(long)]
+        json: bool,
+
+        /// Max tokens (default: 800)
+        #[arg(long, default_value_t = 800)]
+        max_tokens: usize,
+    },
+
+    /// Memory consolidation: decay scores, duplicate detection, TTL expiry
+    Consolidate {
+        /// Filter by project
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Similarity threshold for merge candidates (0.0-1.0, default: 0.6)
+        #[arg(long, default_value_t = 0.6)]
+        threshold: f64,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Cross-project patterns
@@ -209,6 +269,16 @@ enum Commands {
         project: Option<String>,
     },
 
+    /// Launch web dashboard on localhost
+    Web {
+        /// Port to listen on
+        #[arg(long, default_value_t = 3000)]
+        port: u16,
+    },
+
+    /// Start MCP (Model Context Protocol) server for Claude Code/Cursor integration
+    Mcp,
+
     /// Search using Semantic XPath query
     #[command(name = "xpath")]
     XPath {
@@ -226,6 +296,10 @@ enum Commands {
         /// Show tree structure of results
         #[arg(long)]
         tree: bool,
+
+        /// Output as JSON (for agent consumption)
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -235,10 +309,10 @@ enum Commands {
 
 /// Expand a leading `~/` to the actual home directory.
 fn expand_tilde(path: &str) -> PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest);
-        }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
     }
     PathBuf::from(path)
 }
@@ -408,64 +482,81 @@ fn cmd_init() -> Result<()> {
     }
 
     // Codex
-    if detection.codex.is_some() {
-        if let Some(ingester) = CodexIngester::new() {
-            match ingester.ingest_all() {
-                Ok(result) => {
-                    let s_count = result.sessions.len();
-                    let m_count = result.memories.len();
-                    let t_count = result.tool_calls.len();
+    if detection.codex.is_some()
+        && let Some(ingester) = CodexIngester::new()
+    {
+        match ingester.ingest_all() {
+            Ok(result) => {
+                let s_count = result.sessions.len();
+                let m_count = result.memories.len();
+                let t_count = result.tool_calls.len();
 
-                    for session in &result.sessions {
-                        if let Err(e) = store.insert_session(session) {
-                            eprintln!("  [!] Failed to insert Codex session {}: {e}", session.id);
-                        }
+                for session in &result.sessions {
+                    if let Err(e) = store.insert_session(session) {
+                        eprintln!("  [!] Failed to insert Codex session {}: {e}", session.id);
                     }
-                    for memory in &result.memories {
-                        if let Err(e) = store.insert_memory(memory) {
-                            eprintln!("  [!] Failed to insert Codex memory: {e}");
-                        }
-                    }
-
-                    total_sessions += s_count;
-                    total_memories += m_count;
-                    total_tool_calls += t_count;
-                    println!(
-                        "  Codex CLI:   {s_count} sessions, {t_count} tool calls, {m_count} memories"
-                    );
                 }
-                Err(e) => eprintln!("  [!] Codex ingestion error: {e}"),
+                for memory in &result.memories {
+                    if let Err(e) = store.insert_memory(memory) {
+                        eprintln!("  [!] Failed to insert Codex memory: {e}");
+                    }
+                }
+
+                total_sessions += s_count;
+                total_memories += m_count;
+                total_tool_calls += t_count;
+                println!(
+                    "  Codex CLI:   {s_count} sessions, {t_count} tool calls, {m_count} memories"
+                );
             }
+            Err(e) => eprintln!("  [!] Codex ingestion error: {e}"),
         }
     }
 
     // Gemini
-    if detection.gemini.is_some() {
-        if let Some(ingester) = GeminiIngester::new() {
-            let (result, sessions, _tool_calls, memories) = ingester.ingest_all();
+    if detection.gemini.is_some()
+        && let Some(ingester) = GeminiIngester::new()
+    {
+        let (result, sessions, _tool_calls, memories) = ingester.ingest_all();
 
-            for session in &sessions {
-                if let Err(e) = store.insert_session(session) {
-                    eprintln!("  [!] Failed to insert Gemini session {}: {e}", session.id);
-                }
+        for session in &sessions {
+            if let Err(e) = store.insert_session(session) {
+                eprintln!("  [!] Failed to insert Gemini session {}: {e}", session.id);
             }
-            for memory in &memories {
-                if let Err(e) = store.insert_memory(memory) {
-                    eprintln!("  [!] Failed to insert Gemini memory: {e}");
-                }
+        }
+        for memory in &memories {
+            if let Err(e) = store.insert_memory(memory) {
+                eprintln!("  [!] Failed to insert Gemini memory: {e}");
             }
+        }
 
-            total_sessions += result.sessions_found;
-            total_memories += result.memories_found;
-            total_tool_calls += result.tool_calls_found;
-            println!(
-                "  Gemini CLI:  {} sessions, {} tool calls, {} memories",
-                result.sessions_found, result.tool_calls_found, result.memories_found
-            );
-            if !result.errors.is_empty() {
-                for err in &result.errors {
-                    eprintln!("  [!] Gemini: {err}");
-                }
+        total_sessions += result.sessions_found;
+        total_memories += result.memories_found;
+        total_tool_calls += result.tool_calls_found;
+        println!(
+            "  Gemini CLI:  {} sessions, {} tool calls, {} memories",
+            result.sessions_found, result.tool_calls_found, result.memories_found
+        );
+        if !result.errors.is_empty() {
+            for err in &result.errors {
+                eprintln!("  [!] Gemini: {err}");
+            }
+        }
+    }
+
+    // Populate projects and file_stats from ingested sessions
+    let all_sessions = store.get_recent_sessions(10_000).unwrap_or_default();
+    let mut projects_seen = std::collections::HashSet::new();
+    let mut files_tracked = 0usize;
+    for s in &all_sessions {
+        if let Some(ref pid) = s.project_id {
+            if projects_seen.insert(pid.clone()) {
+                let name = pid.rsplit('/').next().unwrap_or(pid);
+                let _ = store.upsert_project(pid, name, pid);
+            }
+            for f in &s.files_changed {
+                let _ = store.upsert_file_stat(f, pid);
+                files_tracked += 1;
             }
         }
     }
@@ -475,6 +566,8 @@ fn cmd_init() -> Result<()> {
     println!("  Sessions ingested: {total_sessions}");
     println!("  Tool calls found:  {total_tool_calls}");
     println!("  Memories ingested: {total_memories}");
+    println!("  Projects tracked:  {}", projects_seen.len());
+    println!("  File changes:      {files_tracked}");
     println!("\nInitialization complete. Run `rem status` to verify.");
 
     Ok(())
@@ -743,10 +836,33 @@ fn cmd_stop() -> Result<()> {
     Ok(())
 }
 
-fn cmd_recent(limit: usize) -> Result<()> {
+fn cmd_recent(limit: usize, agent: Option<&str>, project: Option<&str>) -> Result<()> {
     let config = AppConfig::load()?;
     let store = open_store(&config)?;
-    let sessions = store.get_recent_sessions(limit)?;
+    // Fetch more than needed so post-filtering still returns enough results
+    let fetch_limit = if agent.is_some() || project.is_some() {
+        limit * 5
+    } else {
+        limit
+    };
+    let sessions: Vec<_> = store
+        .get_recent_sessions(fetch_limit)?
+        .into_iter()
+        .filter(|s| {
+            if let Some(a) = agent
+                && !s.agent.eq_ignore_ascii_case(a)
+            {
+                return false;
+            }
+            if let Some(p) = project
+                && s.project_id.as_deref() != Some(p)
+            {
+                return false;
+            }
+            true
+        })
+        .take(limit)
+        .collect();
 
     if sessions.is_empty() {
         println!("No sessions found. Run `rem init` to ingest agent data.");
@@ -754,8 +870,8 @@ fn cmd_recent(limit: usize) -> Result<()> {
     }
 
     println!(
-        "{:<36}  {:<12}  {:<20}  {:>5}  {:>5}  {}",
-        "SESSION ID", "AGENT", "STARTED", "MSGS", "TOOLS", "SUMMARY"
+        "{:<36}  {:<12}  {:<20}  {:>5}  {:>5}  SUMMARY",
+        "SESSION ID", "AGENT", "STARTED", "MSGS", "TOOLS"
     );
     println!("{}", "-".repeat(110));
 
@@ -803,155 +919,145 @@ async fn cmd_search(
     since: Option<&str>,
     content_type: Option<&str>,
     exact: bool,
+    json_output: bool,
 ) -> Result<()> {
     let config = AppConfig::load()?;
     let store = open_store(&config)?;
 
     let since_dt = since.and_then(parse_since);
 
-    if exact {
-        // Exact search via DuckDB ILIKE
-        let memories = store.search_memories(query)?;
-        if memories.is_empty() {
-            println!("No results found for exact query: {query}");
-            return Ok(());
-        }
-        println!("Exact search results for \"{query}\":\n");
-        let mut shown = 0usize;
-        for m in &memories {
-            // Apply optional filters
-            if let Some(proj) = project {
-                if let Some(ref pid) = m.project_id {
-                    if !pid.to_lowercase().contains(&proj.to_lowercase()) {
-                        continue;
-                    }
-                } else {
-                    continue;
-                }
-            }
-            if let Some(ref ctype) = content_type {
-                if let Some(ref mt) = m.memory_type {
-                    if !mt.to_lowercase().contains(&ctype.to_lowercase()) {
-                        continue;
-                    }
-                } else {
-                    continue;
-                }
-            }
-            if let Some(since_dt) = since_dt {
-                if let Some(ref created) = m.created_at {
-                    if *created < since_dt {
-                        continue;
-                    }
-                }
-            }
+    // JSON output mode: uses HybridSearch text-only for fast agent-friendly results
+    if json_output {
+        let search = remembrant_engine::HybridSearch::new(&store);
 
-            let mtype = m.memory_type.as_deref().unwrap_or("unknown");
-            let proj = m.project_id.as_deref().unwrap_or("-");
-            println!("  Memory ({mtype}) -- {proj}");
-            println!("    {}", truncate(&m.content, 80));
-            println!();
-            shown += 1;
-        }
-        println!("{shown} result(s).");
+        let results = if remembrant_engine::is_xpath_query(query) {
+            search.search_xpath(query, 20)?
+        } else {
+            search.search_text_only(query, 20)?
+        };
+
+        let json_results: Vec<serde_json::Value> = results
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "id": r.id,
+                    "type": r.result_type.to_string(),
+                    "content": r.content,
+                    "score": r.score,
+                    "sources": r.sources,
+                    "metadata": r.metadata,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "query": query,
+                "count": json_results.len(),
+                "results": json_results,
+            }))?
+        );
         return Ok(());
     }
 
-    // Semantic search: try LM Studio, fall back to exact
-    let embedder = LmStudioEmbedder::from_config(&config.embedding);
-    let embed_result = embedder.embed_texts(&[query]).await;
+    // Unified hybrid search for all non-JSON modes.
+    // Tries full hybrid (text + vector + graph + xpath + recency), falls back to text-only.
+    let search = remembrant_engine::HybridSearch::new(&store);
 
-    match embed_result {
-        Ok(vectors) if !vectors.is_empty() => {
-            let query_vec = &vectors[0];
-            let lance = open_lance_store(&config).await?;
-
-            // Search memories
-            let mem_results = lance.search_memories(query_vec, 10).await?;
-            // Search code
-            let code_results = lance.search_code(query_vec, 10).await?;
-
-            // Combine into a unified list sorted by distance
-            struct SearchHit {
-                distance: f32,
-                kind: String,
-                label: String,
-                project: String,
-                content: String,
-            }
-
-            let mut hits: Vec<SearchHit> = Vec::new();
-
-            for m in &mem_results {
-                // Apply filters
-                if let Some(proj) = project {
-                    if !m.project_id.to_lowercase().contains(&proj.to_lowercase()) {
-                        continue;
-                    }
-                }
-                if let Some(ref ctype) = content_type {
-                    if !m.memory_type.to_lowercase().contains(&ctype.to_lowercase()) {
-                        continue;
-                    }
-                }
-                hits.push(SearchHit {
-                    distance: m.distance,
-                    kind: "Memory".to_string(),
-                    label: m.memory_type.clone(),
-                    project: m.project_id.clone(),
-                    content: m.content.clone(),
-                });
-            }
-
-            for c in &code_results {
-                if let Some(proj) = project {
-                    if !c.project_id.to_lowercase().contains(&proj.to_lowercase()) {
-                        continue;
-                    }
-                }
-                let file_label = c.file_path.as_deref().unwrap_or(&c.project_id);
-                hits.push(SearchHit {
-                    distance: c.distance,
-                    kind: "Code".to_string(),
-                    label: c.granularity.clone(),
-                    project: file_label.to_string(),
-                    content: c.content.clone(),
-                });
-            }
-
-            hits.sort_by(|a, b| {
-                a.distance
-                    .partial_cmp(&b.distance)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-
-            if hits.is_empty() {
-                println!("No semantic results found for: {query}");
-                return Ok(());
-            }
-
-            println!("Semantic search results for \"{query}\":\n");
-            for hit in &hits {
-                println!(
-                    "[{:.3}] {} ({}) -- {}",
-                    hit.distance, hit.kind, hit.label, hit.project
-                );
-                println!("  {}", truncate(&hit.content, 80));
-                println!();
-            }
-            println!("{} result(s).", hits.len());
+    let results = if exact || remembrant_engine::is_xpath_query(query) {
+        // Exact/XPath: text-only (no embeddings needed)
+        if remembrant_engine::is_xpath_query(query) {
+            search.search_xpath(query, 20)?
+        } else {
+            search.search_text_only(query, 40)?
         }
-        Ok(_) => {
-            eprintln!("Warning: embedding returned empty result. Falling back to exact search.");
-            return Box::pin(cmd_search(query, project, agent, since, content_type, true)).await;
+    } else {
+        // Full hybrid: try vector search, fall back to text-only
+        let embedder = LmStudioEmbedder::from_config(&config.embedding);
+        match open_lance_store(&config).await {
+            Ok(lance) => {
+                search
+                    .search(
+                        query,
+                        40,
+                        Some(&lance),
+                        None, // graph boost TODO: unify GraphStore/DuckStore backends
+                        Some(&embedder),
+                    )
+                    .await?
+            }
+            Err(e) => {
+                eprintln!("Warning: LanceDB unavailable ({e:#}). Using text-only search.");
+                search.search_text_only(query, 40)?
+            }
         }
-        Err(e) => {
-            eprintln!(
-                "Warning: could not connect to LM Studio ({e:#}). Falling back to exact search."
-            );
-            return Box::pin(cmd_search(query, project, agent, since, content_type, true)).await;
-        }
+    };
+
+    // Post-filter by project, agent, content_type, since
+    let results: Vec<_> = results
+        .into_iter()
+        .filter(|r| {
+            if let Some(proj) = project {
+                let rp = r.metadata.get("project").map(|s| s.as_str()).unwrap_or("");
+                if !rp.to_lowercase().contains(&proj.to_lowercase()) {
+                    return false;
+                }
+            }
+            if let Some(a) = agent {
+                let ra = r.metadata.get("agent").map(|s| s.as_str()).unwrap_or("");
+                if !ra.eq_ignore_ascii_case(a) {
+                    return false;
+                }
+            }
+            if let Some(ctype) = content_type {
+                let rt = r.metadata.get("type").map(|s| s.as_str()).unwrap_or("");
+                if !rt.to_lowercase().contains(&ctype.to_lowercase()) {
+                    return false;
+                }
+            }
+            if let Some(since_dt) = since_dt {
+                let ts_str = r
+                    .metadata
+                    .get("started_at")
+                    .or_else(|| r.metadata.get("created_at"))
+                    .or_else(|| r.metadata.get("valid_at"));
+                if let Some(ts) = ts_str
+                    && let Ok(ts) =
+                        chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S%.f")
+                    && ts < since_dt
+                {
+                    return false;
+                }
+            }
+            true
+        })
+        .take(20)
+        .collect();
+
+    if results.is_empty() {
+        println!("No results found for: {query}");
+        return Ok(());
     }
+
+    let mode_label = if exact { "Exact" } else { "Hybrid" };
+    println!("{mode_label} search results for \"{query}\":\n");
+    for r in &results {
+        let sources = r.sources.join("+");
+        println!(
+            "[{:.3}] {} ({}) -- {}",
+            r.score,
+            r.result_type,
+            sources,
+            r.metadata
+                .get("project")
+                .or_else(|| r.metadata.get("file_path"))
+                .map(|s| s.as_str())
+                .unwrap_or("-")
+        );
+        println!("  {}", truncate(&r.content, 80));
+        println!();
+    }
+    println!("{} result(s).", results.len());
 
     Ok(())
 }
@@ -1009,7 +1115,7 @@ fn cmd_find(query: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_brief(project: Option<&str>, today: bool) -> Result<()> {
+fn cmd_brief(project: Option<&str>, today: bool, json_output: bool) -> Result<()> {
     let config = AppConfig::load()?;
     let store = open_store(&config)?;
 
@@ -1025,6 +1131,70 @@ fn cmd_brief(project: Option<&str>, today: bool) -> Result<()> {
 
     let sessions = store.search_sessions(None, project, Some(since), 1000)?;
     let memories = store.get_memories(project, 10)?;
+    let facts = store.get_active_facts(project, 20)?;
+    let decisions = store.get_decisions(project, 10)?;
+
+    if json_output {
+        let json_sessions: Vec<serde_json::Value> = sessions
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "id": s.id,
+                    "agent": s.agent,
+                    "project": s.project_id,
+                    "summary": s.summary,
+                    "files_changed": s.files_changed,
+                    "messages": s.message_count,
+                    "tools": s.tool_call_count,
+                    "duration_min": s.duration_minutes,
+                })
+            })
+            .collect();
+        let json_facts: Vec<serde_json::Value> = facts
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "subject": f.subject,
+                    "predicate": f.predicate,
+                    "object": f.object,
+                    "confidence": f.confidence,
+                })
+            })
+            .collect();
+        let json_memories: Vec<serde_json::Value> = memories
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "id": m.id,
+                    "type": m.memory_type,
+                    "content": m.content,
+                    "confidence": m.confidence,
+                })
+            })
+            .collect();
+        let json_decisions: Vec<serde_json::Value> = decisions
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "what": d.what,
+                    "why": d.why,
+                    "alternatives": d.alternatives,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "date": today_date.format("%Y-%m-%d").to_string(),
+                "project": project,
+                "sessions": json_sessions,
+                "facts": json_facts,
+                "memories": json_memories,
+                "decisions": json_decisions,
+            }))?
+        );
+        return Ok(());
+    }
 
     let window_label = if today { "24h" } else { "3 days" };
 
@@ -1109,6 +1279,124 @@ fn cmd_brief(project: Option<&str>, today: bool) -> Result<()> {
     Ok(())
 }
 
+fn cmd_context_brief(project: Option<&str>, max_tokens: usize, json: bool) -> Result<()> {
+    let config = AppConfig::load()?;
+    let store = open_store(&config)?;
+    let assembler = remembrant_engine::ContextAssembler::new(&store).with_max_tokens(max_tokens);
+    let ctx = assembler.project_context(project)?;
+    if json {
+        println!("{}", ctx.to_json()?);
+    } else {
+        print!("{}", ctx.to_prompt_block());
+    }
+    Ok(())
+}
+
+fn cmd_context_topic(
+    topic: &str,
+    project: Option<&str>,
+    max_tokens: usize,
+    json: bool,
+) -> Result<()> {
+    let config = AppConfig::load()?;
+    let store = open_store(&config)?;
+    let assembler = remembrant_engine::ContextAssembler::new(&store).with_max_tokens(max_tokens);
+    let ctx = assembler.topic_context(topic, project)?;
+    if json {
+        println!("{}", ctx.to_json()?);
+    } else {
+        print!("{}", ctx.to_prompt_block());
+    }
+    Ok(())
+}
+
+fn cmd_consolidate(project: Option<&str>, threshold: f64, json: bool) -> Result<()> {
+    let config = AppConfig::load()?;
+    let store = open_store(&config)?;
+
+    let (stats, scores, candidates) = remembrant_engine::consolidate(&store, project, threshold)?;
+
+    if json {
+        let json_scores: Vec<serde_json::Value> = scores
+            .iter()
+            .take(20)
+            .map(|s| {
+                serde_json::json!({
+                    "memory_id": s.memory_id,
+                    "score": (s.score * 1000.0).round() / 1000.0,
+                    "confidence": s.components.confidence,
+                    "access_freq": (s.components.access_frequency * 100.0).round() / 100.0,
+                    "recency": (s.components.recency * 100.0).round() / 100.0,
+                })
+            })
+            .collect();
+        let json_candidates: Vec<serde_json::Value> = candidates
+            .iter()
+            .take(10)
+            .map(|c| {
+                serde_json::json!({
+                    "memory_a": c.memory_a,
+                    "memory_b": c.memory_b,
+                    "similarity": (c.similarity * 100.0).round() / 100.0,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "expired": stats.expired_count,
+                "merge_candidates": json_candidates,
+                "decay_scores": json_scores,
+            }))?
+        );
+        return Ok(());
+    }
+
+    println!("=== Memory Consolidation ===\n");
+    println!(
+        "Expired {} stale memories (past valid_until).",
+        stats.expired_count
+    );
+    println!("Scored {} memories.", stats.scored_count);
+    println!();
+
+    if !candidates.is_empty() {
+        println!(
+            "Merge Candidates ({} found, threshold: {:.0}%):",
+            candidates.len(),
+            threshold * 100.0
+        );
+        for c in candidates.iter().take(10) {
+            println!(
+                "  {:.0}% similar: {} <-> {}",
+                c.similarity * 100.0,
+                c.memory_a,
+                c.memory_b
+            );
+        }
+        println!();
+    }
+
+    println!("Top Memories by Decay Score:");
+    for (i, s) in scores.iter().take(15).enumerate() {
+        println!(
+            "  {}. [{:.3}] {} (conf={:.0}% access={:.2} recency={:.2})",
+            i + 1,
+            s.score,
+            s.memory_id,
+            s.components.confidence * 100.0,
+            s.components.access_frequency,
+            s.components.recency,
+        );
+    }
+
+    if scores.len() > 15 {
+        println!("  ... and {} more", scores.len() - 15);
+    }
+
+    Ok(())
+}
+
 fn cmd_related(path: &str) -> Result<()> {
     let config = AppConfig::load()?;
     let store = open_store(&config)?;
@@ -1167,11 +1455,11 @@ fn cmd_timeline(topic: &str, since: Option<&str>) -> Result<()> {
         if let Some(since_dt) = parse_since(since_str) {
             let filtered_sessions: Vec<_> = sessions
                 .into_iter()
-                .filter(|s| s.started_at.map_or(false, |dt| dt >= since_dt))
+                .filter(|s| s.started_at.is_some_and(|dt| dt >= since_dt))
                 .collect();
             let filtered_memories: Vec<_> = memories
                 .into_iter()
-                .filter(|m| m.created_at.map_or(false, |dt| dt >= since_dt))
+                .filter(|m| m.created_at.is_some_and(|dt| dt >= since_dt))
                 .collect();
             (filtered_sessions, filtered_memories)
         } else {
@@ -1225,10 +1513,10 @@ fn cmd_patterns(topic: Option<&str>) -> Result<()> {
         let entry = pattern_groups
             .entry(content)
             .or_insert_with(|| (Vec::new(), None));
-        if let Some(ref pid) = m.project_id {
-            if !entry.0.contains(pid) {
-                entry.0.push(pid.clone());
-            }
+        if let Some(ref pid) = m.project_id
+            && !entry.0.contains(pid)
+        {
+            entry.0.push(pid.clone());
         }
         if let Some(created) = m.created_at {
             match entry.1 {
@@ -1479,6 +1767,8 @@ fn cmd_stats() -> Result<()> {
     let memory_count = store.count_memories()?;
     let decision_count = store.count_decisions()?;
     let tool_call_count = store.count_tool_calls()?;
+    let fact_count = store.count_facts()?;
+    let active_fact_count = store.count_active_facts()?;
 
     // Per-agent breakdown
     let agent_counts = store.get_agent_session_counts()?;
@@ -1496,6 +1786,7 @@ fn cmd_stats() -> Result<()> {
     println!("Sessions:    {session_count}{agent_str}");
     println!("Memories:    {memory_count}");
     println!("Decisions:   {decision_count}");
+    println!("Facts:       {active_fact_count} active / {fact_count} total");
     println!("Tool calls:  {tool_call_count}");
 
     // Per-project
@@ -1630,63 +1921,61 @@ async fn cmd_ingest(skip_embed: bool, skip_distill: bool) -> Result<()> {
     }
 
     // Codex
-    if detection.codex.is_some() {
-        if let Some(ingester) = CodexIngester::new() {
-            match ingester.ingest_all() {
-                Ok(result) => {
-                    println!(
-                        "  ✓ Codex CLI:   {} sessions, {} tool calls, {} memories",
-                        result.sessions.len(),
-                        result.tool_calls.len(),
-                        result.memories.len()
-                    );
-                    for s in &result.sessions {
-                        let _ = store.insert_or_replace_session(s);
-                    }
-                    for m in &result.memories {
-                        let _ = store.insert_memory(m);
-                    }
-                    for tc in &result.tool_calls {
-                        let _ = store.insert_tool_call(tc);
-                    }
-                    all_sessions.extend(result.sessions);
-                    all_memories.extend(result.memories);
-                    all_tool_calls.extend(result.tool_calls);
+    if detection.codex.is_some()
+        && let Some(ingester) = CodexIngester::new()
+    {
+        match ingester.ingest_all() {
+            Ok(result) => {
+                println!(
+                    "  ✓ Codex CLI:   {} sessions, {} tool calls, {} memories",
+                    result.sessions.len(),
+                    result.tool_calls.len(),
+                    result.memories.len()
+                );
+                for s in &result.sessions {
+                    let _ = store.insert_or_replace_session(s);
                 }
-                Err(e) => eprintln!("  ✗ Codex CLI: {e}"),
+                for m in &result.memories {
+                    let _ = store.insert_memory(m);
+                }
+                for tc in &result.tool_calls {
+                    let _ = store.insert_tool_call(tc);
+                }
+                all_sessions.extend(result.sessions);
+                all_memories.extend(result.memories);
+                all_tool_calls.extend(result.tool_calls);
             }
+            Err(e) => eprintln!("  ✗ Codex CLI: {e}"),
         }
     }
 
     // Gemini
-    if detection.gemini.is_some() {
-        if let Some(ingester) = GeminiIngester::new() {
-            let (result, sessions, tool_calls, memories) = ingester.ingest_all();
-            println!(
-                "  ✓ Gemini CLI:  {} sessions, {} tool calls, {} memories",
-                result.sessions_found, result.tool_calls_found, result.memories_found
-            );
-            for s in &sessions {
-                let _ = store.insert_or_replace_session(s);
-            }
-            for m in &memories {
-                let _ = store.insert_memory(m);
-            }
-            for tc in &tool_calls {
-                let _ = store.insert_tool_call(tc);
-            }
-            all_sessions.extend(sessions);
-            all_memories.extend(memories);
-            all_tool_calls.extend(tool_calls);
+    if detection.gemini.is_some()
+        && let Some(ingester) = GeminiIngester::new()
+    {
+        let (result, sessions, tool_calls, memories) = ingester.ingest_all();
+        println!(
+            "  ✓ Gemini CLI:  {} sessions, {} tool calls, {} memories",
+            result.sessions_found, result.tool_calls_found, result.memories_found
+        );
+        for s in &sessions {
+            let _ = store.insert_or_replace_session(s);
         }
+        for m in &memories {
+            let _ = store.insert_memory(m);
+        }
+        for tc in &tool_calls {
+            let _ = store.insert_tool_call(tc);
+        }
+        all_sessions.extend(sessions);
+        all_memories.extend(memories);
+        all_tool_calls.extend(tool_calls);
     }
 
     let total_s = all_sessions.len();
     let total_m = all_memories.len();
     let total_tc = all_tool_calls.len();
-    println!(
-        "\n  Total: {total_s} sessions, {total_tc} tool calls, {total_m} memories → DuckDB ✓"
-    );
+    println!("\n  Total: {total_s} sessions, {total_tc} tool calls, {total_m} memories → DuckDB ✓");
 
     // ── Step 2: LLM Distillation ────────────────────────────────────
     if skip_distill {
@@ -1707,6 +1996,7 @@ async fn cmd_ingest(skip_embed: bool, skip_distill: bool) -> Result<()> {
         let mut decisions_count = 0usize;
         let mut patterns_count = 0usize;
         let mut problems_count = 0usize;
+        let mut facts_count = 0usize;
 
         for session in &all_sessions {
             let summary = session.summary.as_deref().unwrap_or("");
@@ -1726,6 +2016,10 @@ async fn cmd_ingest(skip_embed: bool, skip_distill: bool) -> Result<()> {
                         let _ = store.insert_memory(&m);
                         patterns_count += 1;
                     }
+                    for f in distiller.to_facts(&distilled, Some(&session.agent)) {
+                        let _ = store.upsert_fact(&f);
+                        facts_count += 1;
+                    }
                     problems_count += distilled.problems.len();
                 }
                 Err(e) => {
@@ -1735,7 +2029,7 @@ async fn cmd_ingest(skip_embed: bool, skip_distill: bool) -> Result<()> {
         }
 
         println!(
-            "  Extracted: {decisions_count} decisions, {patterns_count} patterns, {problems_count} problems"
+            "  Extracted: {decisions_count} decisions, {patterns_count} patterns, {problems_count} problems, {facts_count} facts"
         );
     }
 
@@ -1804,13 +2098,13 @@ fn print_summary(sessions: usize, memories: usize, tool_calls: usize) {
 }
 
 /// Build an in-memory graph from all DuckDB data.
-fn build_graph(store: &DuckStore) -> Result<GraphBuilder<remembrant_engine::store::GraphStore>> {
+fn build_graph(store: &DuckStore) -> Result<GraphBuilder<&DuckStore>> {
     let sessions = store.get_recent_sessions(10_000)?;
     let memories = store.get_memories(None, 10_000)?;
     let decisions = store.get_decisions(None, 10_000)?;
     let tool_calls = Vec::new();
 
-    let builder = GraphBuilder::new();
+    let builder = GraphBuilder::with_backend(store);
     builder.build_from_data(&sessions, &memories, &decisions, &tool_calls)?;
     Ok(builder)
 }
@@ -1833,14 +2127,13 @@ fn cmd_analyze(path: &str, project: Option<&str>) -> Result<()> {
         let store = open_store(&config)?;
         let repo_path = expand_tilde(path);
 
-        let project_id = project
-            .map(String::from)
-            .unwrap_or_else(|| {
-                repo_path.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string()
-            });
+        let project_id = project.map(String::from).unwrap_or_else(|| {
+            repo_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string()
+        });
 
         println!("Analyzing {}...", repo_path.display());
         println!("  Project: {project_id}");
@@ -1923,7 +2216,13 @@ async fn cmd_embed(path: &str, _update: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_xpath(query: &str, depth: usize, limit: usize, show_tree: bool) -> Result<()> {
+fn cmd_xpath(
+    query: &str,
+    depth: usize,
+    limit: usize,
+    show_tree: bool,
+    json_output: bool,
+) -> Result<()> {
     let config = AppConfig::load()?;
     let store = open_store(&config)?;
 
@@ -1938,6 +2237,32 @@ fn cmd_xpath(query: &str, depth: usize, limit: usize, show_tree: bool) -> Result
     // Evaluate with keyword scorer (no embeddings needed)
     let scorer = remembrant_engine::semantic_scorer::keyword_scorer;
     let results = remembrant_engine::xpath_query::evaluate(&parsed, &root, &scorer);
+
+    if json_output {
+        // Agent-friendly JSON output
+        let json_results: Vec<serde_json::Value> = results
+            .iter()
+            .take(limit)
+            .map(|r| {
+                serde_json::json!({
+                    "node_id": r.node_id,
+                    "node_type": r.node_type,
+                    "name": r.name,
+                    "weight": r.weight,
+                    "path": r.path,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "query": query,
+                "count": results.len(),
+                "results": json_results,
+            }))?
+        );
+        return Ok(());
+    }
 
     // Display results
     if results.is_empty() {
@@ -1973,6 +2298,232 @@ fn cmd_xpath(query: &str, depth: usize, limit: usize, show_tree: bool) -> Result
 }
 
 // ---------------------------------------------------------------------------
+// Web server
+// ---------------------------------------------------------------------------
+
+struct WebState {
+    config: AppConfig,
+}
+
+impl WebState {
+    fn store(&self) -> Result<DuckStore, StatusCode> {
+        open_store(&self.config).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    }
+}
+
+async fn web_index() -> Html<&'static str> {
+    Html(include_str!("web_dashboard.html"))
+}
+
+async fn web_stats(
+    State(state): State<Arc<WebState>>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let sessions = store
+        .count_sessions()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let memories = store
+        .count_memories()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let decisions = store
+        .count_decisions()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let tool_calls = store
+        .count_tool_calls()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let projects = store
+        .get_project_ids()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(axum::Json(serde_json::json!({
+        "sessions": sessions,
+        "memories": memories,
+        "decisions": decisions,
+        "tool_calls": tool_calls,
+        "projects": projects.len(),
+    })))
+}
+
+async fn web_projects(
+    State(state): State<Arc<WebState>>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let projects = store
+        .get_project_ids()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(axum::Json(
+        serde_json::to_value(&projects).unwrap_or_default(),
+    ))
+}
+
+#[derive(serde::Deserialize)]
+struct SessionsQuery {
+    limit: Option<usize>,
+    project: Option<String>,
+    agent: Option<String>,
+}
+
+async fn web_sessions(
+    State(state): State<Arc<WebState>>,
+    Query(q): Query<SessionsQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let limit = q.limit.unwrap_or(200);
+    let sessions = store
+        .search_sessions(q.agent.as_deref(), q.project.as_deref(), None, limit)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(axum::Json(
+        serde_json::to_value(&sessions).unwrap_or_default(),
+    ))
+}
+
+async fn web_session_detail(
+    State(state): State<Arc<WebState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let sessions = store
+        .search_sessions(None, None, None, 10_000)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let session = sessions
+        .into_iter()
+        .find(|s| s.id == id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let tool_calls = store
+        .get_tool_calls_for_session(&id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(axum::Json(serde_json::json!({
+        "session": session,
+        "tool_calls": tool_calls,
+    })))
+}
+
+#[derive(serde::Deserialize)]
+struct MemoriesQuery {
+    project: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn web_memories(
+    State(state): State<Arc<WebState>>,
+    Query(q): Query<MemoriesQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let memories = store
+        .get_memories(q.project.as_deref(), q.limit.unwrap_or(200))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(axum::Json(
+        serde_json::to_value(&memories).unwrap_or_default(),
+    ))
+}
+
+#[derive(serde::Deserialize)]
+struct DecisionsQuery {
+    project: Option<String>,
+}
+
+async fn web_decisions(
+    State(state): State<Arc<WebState>>,
+    Query(q): Query<DecisionsQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let decisions = store
+        .get_decisions(q.project.as_deref(), 100)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(axum::Json(
+        serde_json::to_value(&decisions).unwrap_or_default(),
+    ))
+}
+
+#[derive(serde::Deserialize)]
+struct SearchQuery {
+    q: String,
+}
+
+async fn web_search_sessions(
+    State(state): State<Arc<WebState>>,
+    Query(sq): Query<SearchQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let sessions = store
+        .search_sessions_by_summary(&sq.q)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(axum::Json(
+        serde_json::to_value(&sessions).unwrap_or_default(),
+    ))
+}
+
+async fn web_search_memories(
+    State(state): State<Arc<WebState>>,
+    Query(sq): Query<SearchQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let memories = store
+        .search_memories(&sq.q)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(axum::Json(
+        serde_json::to_value(&memories).unwrap_or_default(),
+    ))
+}
+
+fn cmd_mcp() -> Result<()> {
+    let config = AppConfig::load()?;
+    let db_path = expand_tilde(&config.storage.duckdb_path);
+
+    if !db_path.exists() {
+        eprintln!(
+            "Database not found at {}. Run 'rem ingest' first.",
+            db_path.display()
+        );
+        std::process::exit(1);
+    }
+
+    let store = DuckStore::open(&db_path)?;
+    let server = mcp_server::McpServer::new(store);
+
+    eprintln!("Remembrant MCP server started (stdio)");
+    server.run()?;
+    Ok(())
+}
+
+async fn cmd_web(port: u16) -> Result<()> {
+    let config = AppConfig::load()?;
+
+    // Verify DB exists
+    let db_path = expand_tilde(&config.storage.duckdb_path);
+    if !db_path.exists() {
+        anyhow::bail!(
+            "DuckDB not found at {}. Run `rem init` first.",
+            db_path.display()
+        );
+    }
+
+    let state = Arc::new(WebState { config });
+
+    let app = Router::new()
+        .route("/", get(web_index))
+        .route("/api/stats", get(web_stats))
+        .route("/api/projects", get(web_projects))
+        .route("/api/sessions", get(web_sessions))
+        .route("/api/sessions/{id}", get(web_session_detail))
+        .route("/api/memories", get(web_memories))
+        .route("/api/decisions", get(web_decisions))
+        .route("/api/search/sessions", get(web_search_sessions))
+        .route("/api/search/memories", get(web_search_memories))
+        .layer(CorsLayer::permissive())
+        .with_state(state);
+
+    let addr = format!("127.0.0.1:{port}");
+    println!("Remembrant web dashboard: http://{addr}");
+    println!("Press Ctrl+C to stop.\n");
+
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .with_context(|| format!("failed to bind to {addr}"))?;
+    axum::serve(listener, app).await.context("server error")?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -1999,6 +2550,7 @@ async fn main() -> Result<()> {
             since,
             content_type,
             exact,
+            json,
         } => {
             cmd_search(
                 &query,
@@ -2007,17 +2559,47 @@ async fn main() -> Result<()> {
                 since.as_deref(),
                 content_type.as_deref(),
                 exact,
+                json,
             )
             .await?;
         }
         Commands::Find { query } => {
             cmd_find(&query)?;
         }
-        Commands::Recent { limit, .. } => {
-            cmd_recent(limit)?;
+        Commands::Recent {
+            limit,
+            agent,
+            project,
+        } => {
+            cmd_recent(limit, agent.as_deref(), project.as_deref())?;
         }
-        Commands::Brief { project, today } => {
-            cmd_brief(project.as_deref(), today)?;
+        Commands::Brief {
+            project,
+            today,
+            json,
+            for_agent,
+            max_tokens,
+        } => {
+            if for_agent {
+                cmd_context_brief(project.as_deref(), max_tokens, json)?;
+            } else {
+                cmd_brief(project.as_deref(), today, json)?;
+            }
+        }
+        Commands::Context {
+            topic,
+            project,
+            json,
+            max_tokens,
+        } => {
+            cmd_context_topic(&topic, project.as_deref(), max_tokens, json)?;
+        }
+        Commands::Consolidate {
+            project,
+            threshold,
+            json,
+        } => {
+            cmd_consolidate(project.as_deref(), threshold, json)?;
         }
         Commands::Patterns { topic } => {
             cmd_patterns(topic.as_deref())?;
@@ -2035,11 +2617,7 @@ async fn main() -> Result<()> {
             cmd_timeline(&topic, since.as_deref())?;
         }
         Commands::Note { text, project, tag } => {
-            cmd_note(
-                &text,
-                project.as_deref(),
-                tag.as_ref().map(|v| v.as_slice()),
-            )?;
+            cmd_note(&text, project.as_deref(), tag.as_deref())?;
         }
         Commands::Forget { session } => {
             cmd_forget(&session)?;
@@ -2072,13 +2650,20 @@ async fn main() -> Result<()> {
         Commands::Analyze { path, project } => {
             cmd_analyze(&path, project.as_deref())?;
         }
+        Commands::Web { port } => {
+            cmd_web(port).await?;
+        }
+        Commands::Mcp => {
+            cmd_mcp()?;
+        }
         Commands::XPath {
             query,
             depth,
             limit,
             tree,
+            json,
         } => {
-            cmd_xpath(&query, depth, limit, tree)?;
+            cmd_xpath(&query, depth, limit, tree, json)?;
         }
     }
 

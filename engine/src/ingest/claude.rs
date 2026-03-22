@@ -292,46 +292,43 @@ impl ClaudeIngester {
                 }
 
                 // Extract tool_use blocks from assistant content.
-                if msg.role.as_deref() == Some("assistant") {
-                    if let Some(content_val) = &msg.content {
-                        let blocks = extract_content_blocks(content_val);
-                        for block in blocks {
-                            if block.block_type.as_deref() != Some("tool_use") {
-                                continue;
-                            }
-                            let tool_name = block.name.clone();
-                            let command = extract_tool_command(&block);
-
-                            // Track files changed via Read/Write/Edit tools.
-                            if let Some(ref name) = tool_name {
-                                if matches!(name.as_str(), "Write" | "Edit" | "Read") {
-                                    if let Some(ref input) = block.input {
-                                        if let Some(fp) = input
-                                            .get("file_path")
-                                            .or_else(|| input.get("path"))
-                                            .and_then(|v| v.as_str())
-                                        {
-                                            let fp = fp.to_string();
-                                            if !stats.files_changed.contains(&fp) {
-                                                stats.files_changed.push(fp);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            let tc = ToolCall {
-                                id: Uuid::new_v4().to_string(),
-                                session_id: Some(session_id.to_string()),
-                                tool_name,
-                                command,
-                                success: None,
-                                error_message: None,
-                                duration_ms: None,
-                                timestamp: parsed.timestamp.as_deref().and_then(parse_iso8601),
-                            };
-                            stats.tool_calls.push(tc);
+                if msg.role.as_deref() == Some("assistant")
+                    && let Some(content_val) = &msg.content
+                {
+                    let blocks = extract_content_blocks(content_val);
+                    for block in blocks {
+                        if block.block_type.as_deref() != Some("tool_use") {
+                            continue;
                         }
+                        let tool_name = block.name.clone();
+                        let command = extract_tool_command(&block);
+
+                        // Track files changed via Read/Write/Edit tools.
+                        if let Some(ref name) = tool_name
+                            && matches!(name.as_str(), "Write" | "Edit" | "Read")
+                            && let Some(ref input) = block.input
+                            && let Some(fp) = input
+                                .get("file_path")
+                                .or_else(|| input.get("path"))
+                                .and_then(|v| v.as_str())
+                        {
+                            let fp = fp.to_string();
+                            if !stats.files_changed.contains(&fp) {
+                                stats.files_changed.push(fp);
+                            }
+                        }
+
+                        let tc = ToolCall {
+                            id: Uuid::new_v4().to_string(),
+                            session_id: Some(session_id.to_string()),
+                            tool_name,
+                            command,
+                            success: None,
+                            error_message: None,
+                            duration_ms: None,
+                            timestamp: parsed.timestamp.as_deref().and_then(parse_iso8601),
+                        };
+                        stats.tool_calls.push(tc);
                     }
                 }
             }
@@ -430,23 +427,158 @@ impl ClaudeIngester {
         let project_dirs = self.discover_projects();
 
         for project_dir in &project_dirs {
+            let project_id = project_id_from_dir(project_dir);
+
             // Sessions from index
             let mut sessions = self.parse_sessions_index(project_dir)?;
+            let indexed_ids: std::collections::HashSet<String> =
+                sessions.iter().map(|s| s.id.clone()).collect();
+
+            // Discover orphaned .jsonl files not in the index (top-level)
+            if let Ok(entries) = fs::read_dir(project_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                        continue;
+                    }
+                    let session_id = path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if session_id.is_empty() || indexed_ids.contains(&session_id) {
+                        continue;
+                    }
+                    debug!("found orphaned transcript: {}", path.display());
+                    let modified = fs::metadata(&path)
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .map(|t| {
+                            let dt: chrono::DateTime<chrono::Utc> = t.into();
+                            dt.naive_utc()
+                        });
+                    sessions.push(Session {
+                        id: session_id,
+                        project_id: Some(project_id.clone()),
+                        agent: "claude_code".to_string(),
+                        started_at: modified,
+                        ended_at: modified,
+                        duration_minutes: None,
+                        message_count: None,
+                        tool_call_count: None,
+                        total_tokens: None,
+                        files_changed: Vec::new(),
+                        summary: None,
+                    });
+                }
+            }
+
+            // Discover subagent transcripts inside <session-id>/subagents/
+            if let Ok(entries) = fs::read_dir(project_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.is_dir() || path.file_name().is_none_or(|n| n == "memory") {
+                        continue;
+                    }
+                    let subagents_dir = path.join("subagents");
+                    if !subagents_dir.is_dir() {
+                        continue;
+                    }
+                    let parent_session_id = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    if let Ok(sub_entries) = fs::read_dir(&subagents_dir) {
+                        for sub_entry in sub_entries.flatten() {
+                            let sub_path = sub_entry.path();
+                            if sub_path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                                continue;
+                            }
+                            let agent_id = sub_path
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or("")
+                                .to_string();
+                            if agent_id.is_empty() {
+                                continue;
+                            }
+
+                            // Read optional .meta.json for description
+                            let meta_path = subagents_dir.join(format!("{agent_id}.meta.json"));
+                            let summary = if meta_path.is_file() {
+                                fs::read_to_string(&meta_path)
+                                    .ok()
+                                    .and_then(|s| {
+                                        serde_json::from_str::<serde_json::Value>(&s).ok()
+                                    })
+                                    .and_then(|v| {
+                                        let desc = v.get("description")?.as_str()?;
+                                        let agent_type = v
+                                            .get("agentType")
+                                            .and_then(|t| t.as_str())
+                                            .unwrap_or("subagent");
+                                        Some(format!("[{agent_type}] {desc}"))
+                                    })
+                            } else {
+                                None
+                            };
+
+                            let modified = fs::metadata(&sub_path)
+                                .ok()
+                                .and_then(|m| m.modified().ok())
+                                .map(|t| {
+                                    let dt: chrono::DateTime<chrono::Utc> = t.into();
+                                    dt.naive_utc()
+                                });
+
+                            let sub_session_id = format!("{parent_session_id}/{agent_id}");
+                            sessions.push(Session {
+                                id: sub_session_id,
+                                project_id: Some(project_id.clone()),
+                                agent: "claude_code".to_string(),
+                                started_at: modified,
+                                ended_at: modified,
+                                duration_minutes: None,
+                                message_count: None,
+                                tool_call_count: None,
+                                total_tokens: None,
+                                files_changed: Vec::new(),
+                                summary,
+                            });
+                        }
+                    }
+                }
+            }
 
             // For each session, try to parse its transcript
             for session in &mut sessions {
-                let jsonl_path = project_dir.join(format!("{}.jsonl", session.id));
+                // Resolve transcript path: subagents use "parent/agent" IDs
+                let jsonl_path = if session.id.contains('/') {
+                    let parts: Vec<&str> = session.id.splitn(2, '/').collect();
+                    project_dir
+                        .join(parts[0])
+                        .join("subagents")
+                        .join(format!("{}.jsonl", parts[1]))
+                } else {
+                    project_dir.join(format!("{}.jsonl", session.id))
+                };
                 if jsonl_path.is_file() {
                     match self.parse_session_transcript(&jsonl_path, &session.id) {
                         Ok(stats) => {
                             session.tool_call_count = Some(stats.tool_calls.len() as i32);
                             let total = stats.total_input_tokens + stats.total_output_tokens;
                             session.total_tokens = Some(total as i32);
-                            if session.message_count.is_none() {
+                            if session.message_count.is_none() || session.message_count == Some(0) {
                                 session.message_count = Some(stats.message_count);
                             }
                             if !stats.files_changed.is_empty() {
                                 session.files_changed = stats.files_changed;
+                            }
+                            // Derive summary from first user message if missing
+                            if session.summary.is_none() {
+                                session.summary = Self::extract_first_prompt(&jsonl_path);
                             }
                             result.tool_calls.extend(stats.tool_calls);
                         }
@@ -454,9 +586,6 @@ impl ClaudeIngester {
                             warn!("failed to parse transcript {}: {e}", jsonl_path.display());
                         }
                     }
-                } else {
-                    // Try the full_path from the index if the JSONL isn't co-located
-                    // (not all transcripts live in the project dir).
                 }
             }
 
@@ -480,6 +609,29 @@ impl ClaudeIngester {
             result.sessions_count, result.tool_calls_count, result.memories_count
         );
         Ok(result)
+    }
+
+    /// Extract the first user prompt from a `.jsonl` transcript for use as summary.
+    fn extract_first_prompt(jsonl_path: &Path) -> Option<String> {
+        let data = fs::read_to_string(jsonl_path).ok()?;
+        for line in data.lines() {
+            let parsed: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
+            if parsed.get("type").and_then(|t| t.as_str()) == Some("user") {
+                let content = parsed
+                    .pointer("/message/content")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                if let Some(text) = content {
+                    let trimmed = text.trim();
+                    if trimmed.chars().count() > 200 {
+                        let truncated: String = trimmed.chars().take(200).collect();
+                        return Some(format!("{truncated}..."));
+                    }
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+        None
     }
 }
 
