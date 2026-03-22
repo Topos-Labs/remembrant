@@ -17,6 +17,8 @@ jobs:
           path: .infiniloom
       - name: Symlink infiniloom for path dependency
         run: ln -s "$GITHUB_WORKSPACE/.infiniloom" "$GITHUB_WORKSPACE/../infiniloom"
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --exclude remembrant-desktop
