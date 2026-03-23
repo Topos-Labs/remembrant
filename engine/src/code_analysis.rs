@@ -7,9 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
-use crate::store::duckdb::{
-    AnalysisRun, CodeDependency, CodeSymbol as DuckCodeSymbol, DuckStore,
-};
+use crate::store::duckdb::{AnalysisRun, CodeDependency, CodeSymbol as DuckCodeSymbol, DuckStore};
 use crate::store::graph::{EdgeKind, GraphEdge, GraphNode, GraphStoreBackend, NodeKind};
 
 // Import Infiniloom types

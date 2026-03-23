@@ -2498,9 +2498,7 @@ async fn web_facts(
             .get_all_facts(q.project.as_deref(), limit)
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     };
-    Ok(axum::Json(
-        serde_json::to_value(&facts).unwrap_or_default(),
-    ))
+    Ok(axum::Json(serde_json::to_value(&facts).unwrap_or_default()))
 }
 
 async fn web_fact_history(
@@ -2625,9 +2623,7 @@ async fn web_search_facts(
     let facts = store
         .search_facts(&sq.q)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(axum::Json(
-        serde_json::to_value(&facts).unwrap_or_default(),
-    ))
+    Ok(axum::Json(serde_json::to_value(&facts).unwrap_or_default()))
 }
 
 #[derive(serde::Deserialize)]
@@ -2643,8 +2639,8 @@ async fn web_search_xpath(
     let store = state.store()?;
     let limit = xq.limit.unwrap_or(20);
 
-    let parsed = remembrant_engine::xpath_query::parse(&xq.q)
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let parsed =
+        remembrant_engine::xpath_query::parse(&xq.q).map_err(|_| StatusCode::BAD_REQUEST)?;
 
     let builder = remembrant_engine::TreeBuilder::new(&store);
     let root = builder
@@ -2871,7 +2867,10 @@ async fn cmd_web(port: u16) -> Result<()> {
         .route("/api/sessions", get(web_sessions))
         .route("/api/sessions/{id}", get(web_session_detail))
         .route("/api/memories", get(web_memories))
-        .route("/api/decisions", get(web_decisions).post(web_create_decision))
+        .route(
+            "/api/decisions",
+            get(web_decisions).post(web_create_decision),
+        )
         .route("/api/search/sessions", get(web_search_sessions))
         .route("/api/search/memories", get(web_search_memories))
         // New GET endpoints
@@ -2886,7 +2885,10 @@ async fn cmd_web(port: u16) -> Result<()> {
         .route("/api/symbols", get(web_symbols))
         .route("/api/graph/neighbors/{id}", get(web_graph_neighbors))
         // Mutation endpoints
-        .route("/api/memories/{id}", put(web_update_memory).delete(web_delete_memory))
+        .route(
+            "/api/memories/{id}",
+            put(web_update_memory).delete(web_delete_memory),
+        )
         .route("/api/facts/{id}", delete(web_delete_fact))
         .route("/api/notes", post(web_create_note))
         .layer(CorsLayer::permissive())

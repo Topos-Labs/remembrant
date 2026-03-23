@@ -8,15 +8,11 @@ pub mod sqlite_adapter;
 
 use serde::{Deserialize, Serialize};
 
-pub use adapter::{
-    AdapterRegistry, AgentAdapter, AgentMeta, DynamicAgentConfig, IngestOutput,
-};
+pub use adapter::{AdapterRegistry, AgentAdapter, AgentMeta, DynamicAgentConfig, IngestOutput};
 pub use claude::ClaudeIngester;
 pub use codex::CodexIngester;
 pub use gemini::GeminiIngester;
-pub use native_adapters::{
-    build_default_registry, ClaudeAdapter, CodexAdapter, GeminiAdapter,
-};
+pub use native_adapters::{ClaudeAdapter, CodexAdapter, GeminiAdapter, build_default_registry};
 #[cfg(feature = "sqlite-adapters")]
 pub use sqlite_adapter::GenericSqliteAdapter;
 

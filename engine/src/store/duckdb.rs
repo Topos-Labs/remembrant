@@ -418,8 +418,9 @@ impl DuckStore {
     pub fn search_memories_fts(&self, query: &str) -> Result<Vec<(Memory, f64)>> {
         let conn = self.conn.lock().expect("lock poisoned");
 
-        let mut stmt = conn.prepare(
-            "SELECT m.id, m.project_id, m.content, m.memory_type, m.source_session_id,
+        let mut stmt = conn
+            .prepare(
+                "SELECT m.id, m.project_id, m.content, m.memory_type, m.source_session_id,
                     m.confidence, m.access_count, m.created_at, m.updated_at, m.valid_until,
                     fts.score
              FROM memories m
@@ -427,7 +428,8 @@ impl DuckStore {
                    FROM memories) fts ON m.id = fts.id
              WHERE fts.score IS NOT NULL
              ORDER BY fts.score DESC",
-        ).context("failed to prepare FTS memory search")?;
+            )
+            .context("failed to prepare FTS memory search")?;
 
         let rows = stmt
             .query_map(params![query], |row| {
@@ -459,8 +461,9 @@ impl DuckStore {
     pub fn search_facts_fts(&self, query: &str) -> Result<Vec<(Fact, f64)>> {
         let conn = self.conn.lock().expect("lock poisoned");
 
-        let mut stmt = conn.prepare(
-            "SELECT f.id, f.project_id, f.subject, f.predicate, f.object,
+        let mut stmt = conn
+            .prepare(
+                "SELECT f.id, f.project_id, f.subject, f.predicate, f.object,
                     f.confidence, f.source_session_id, f.source_agent,
                     f.valid_at, f.invalid_at, f.superseded_by, f.created_at,
                     fts.score
@@ -469,7 +472,8 @@ impl DuckStore {
                    FROM facts) fts ON f.id = fts.id
              WHERE fts.score IS NOT NULL AND f.invalid_at IS NULL
              ORDER BY fts.score DESC",
-        ).context("failed to prepare FTS fact search")?;
+            )
+            .context("failed to prepare FTS fact search")?;
 
         let rows = stmt
             .query_map(params![query], |row| {
@@ -503,8 +507,9 @@ impl DuckStore {
     pub fn search_sessions_fts(&self, query: &str) -> Result<Vec<(Session, f64)>> {
         let conn = self.conn.lock().expect("lock poisoned");
 
-        let mut stmt = conn.prepare(
-            "SELECT s.id, s.project_id, s.agent, s.started_at, s.ended_at,
+        let mut stmt = conn
+            .prepare(
+                "SELECT s.id, s.project_id, s.agent, s.started_at, s.ended_at,
                     s.duration_minutes, s.message_count, s.tool_call_count,
                     s.total_tokens, s.files_changed, s.summary,
                     fts.score
@@ -513,7 +518,8 @@ impl DuckStore {
                    FROM sessions) fts ON s.id = fts.id
              WHERE fts.score IS NOT NULL
              ORDER BY fts.score DESC",
-        ).context("failed to prepare FTS session search")?;
+            )
+            .context("failed to prepare FTS session search")?;
 
         let rows = stmt
             .query_map(params![query], |row| {
@@ -548,8 +554,9 @@ impl DuckStore {
     pub fn search_code_symbols_fts(&self, query: &str) -> Result<Vec<(CodeSymbol, f64)>> {
         let conn = self.conn.lock().expect("lock poisoned");
 
-        let mut stmt = conn.prepare(
-            "SELECT cs.id, cs.project_id, cs.file_path, cs.symbol_name, cs.symbol_kind,
+        let mut stmt = conn
+            .prepare(
+                "SELECT cs.id, cs.project_id, cs.file_path, cs.symbol_name, cs.symbol_kind,
                     cs.signature, cs.docstring, cs.start_line, cs.end_line,
                     cs.visibility, cs.parent_symbol, cs.pagerank_score,
                     cs.reference_count, cs.language, cs.content_hash, cs.indexed_at,
@@ -559,7 +566,8 @@ impl DuckStore {
                    FROM code_symbols) fts ON cs.id = fts.id
              WHERE fts.score IS NOT NULL
              ORDER BY fts.score DESC",
-        ).context("failed to prepare FTS code_symbols search")?;
+            )
+            .context("failed to prepare FTS code_symbols search")?;
 
         let rows = stmt
             .query_map(params![query], |row| {
@@ -597,8 +605,9 @@ impl DuckStore {
     pub fn search_decisions_fts(&self, query: &str) -> Result<Vec<(Decision, f64)>> {
         let conn = self.conn.lock().expect("lock poisoned");
 
-        let mut stmt = conn.prepare(
-            "SELECT d.id, d.session_id, d.project_id, d.decision_type, d.what,
+        let mut stmt = conn
+            .prepare(
+                "SELECT d.id, d.session_id, d.project_id, d.decision_type, d.what,
                     d.why, d.alternatives, d.outcome, d.created_at, d.valid_until,
                     fts.score
              FROM decisions d
@@ -606,7 +615,8 @@ impl DuckStore {
                    FROM decisions) fts ON d.id = fts.id
              WHERE fts.score IS NOT NULL
              ORDER BY fts.score DESC",
-        ).context("failed to prepare FTS decision search")?;
+            )
+            .context("failed to prepare FTS decision search")?;
 
         let rows = stmt
             .query_map(params![query], |row| {
@@ -2562,15 +2572,17 @@ impl DuckStore {
     /// Aggregate tool call statistics across all sessions.
     pub fn get_tool_call_stats(&self) -> Result<Vec<(String, i64, i64, f64)>> {
         let conn = self.conn.lock().expect("lock poisoned");
-        let mut stmt = conn.prepare(
-            "SELECT COALESCE(tool_name, '(unknown)') AS tn,
+        let mut stmt = conn
+            .prepare(
+                "SELECT COALESCE(tool_name, '(unknown)') AS tn,
                     COUNT(*) AS cnt,
                     SUM(CASE WHEN success THEN 1 ELSE 0 END) AS ok,
                     AVG(duration_ms) AS avg_dur
              FROM tool_calls
              GROUP BY tn
              ORDER BY cnt DESC",
-        ).context("failed to prepare tool call stats")?;
+            )
+            .context("failed to prepare tool call stats")?;
 
         let rows = stmt
             .query_map([], |row| {
@@ -2591,19 +2603,25 @@ impl DuckStore {
     }
 
     /// Get daily session counts grouped by agent, for the last N days.
-    pub fn get_session_timeline(&self, days: i64, agent: Option<&str>) -> Result<Vec<(String, String, i64)>> {
+    pub fn get_session_timeline(
+        &self,
+        days: i64,
+        agent: Option<&str>,
+    ) -> Result<Vec<(String, String, i64)>> {
         let conn = self.conn.lock().expect("lock poisoned");
 
         let cutoff = Utc::now().naive_utc() - chrono::Duration::days(days);
 
         if let Some(ag) = agent {
-            let mut stmt = conn.prepare(
-                "SELECT CAST(started_at AS DATE) AS day, agent, COUNT(*) AS cnt
+            let mut stmt = conn
+                .prepare(
+                    "SELECT CAST(started_at AS DATE) AS day, agent, COUNT(*) AS cnt
                  FROM sessions
                  WHERE started_at >= ? AND agent = ?
                  GROUP BY day, agent
                  ORDER BY day",
-            ).context("failed to prepare session timeline")?;
+                )
+                .context("failed to prepare session timeline")?;
             let rows = stmt
                 .query_map(params![cutoff, ag], |row| {
                     Ok((
@@ -2619,13 +2637,15 @@ impl DuckStore {
             }
             Ok(result)
         } else {
-            let mut stmt = conn.prepare(
-                "SELECT CAST(started_at AS DATE) AS day, agent, COUNT(*) AS cnt
+            let mut stmt = conn
+                .prepare(
+                    "SELECT CAST(started_at AS DATE) AS day, agent, COUNT(*) AS cnt
                  FROM sessions
                  WHERE started_at >= ?
                  GROUP BY day, agent
                  ORDER BY day",
-            ).context("failed to prepare session timeline")?;
+                )
+                .context("failed to prepare session timeline")?;
             let rows = stmt
                 .query_map(params![cutoff], |row| {
                     Ok((
@@ -2670,7 +2690,9 @@ impl DuckStore {
             )
         };
 
-        let mut stmt = conn.prepare(sql).context("failed to prepare get_all_facts")?;
+        let mut stmt = conn
+            .prepare(sql)
+            .context("failed to prepare get_all_facts")?;
 
         let map_row = |row: &duckdb::Row| -> duckdb::Result<Fact> {
             Ok(Fact {
@@ -2708,15 +2730,17 @@ impl DuckStore {
     /// Get per-agent aggregated stats: sessions, total tokens, average duration.
     pub fn get_agent_stats(&self) -> Result<Vec<(String, i64, i64, f64)>> {
         let conn = self.conn.lock().expect("lock poisoned");
-        let mut stmt = conn.prepare(
-            "SELECT agent,
+        let mut stmt = conn
+            .prepare(
+                "SELECT agent,
                     COUNT(*) AS sessions,
                     COALESCE(SUM(total_tokens), 0) AS total_tokens,
                     COALESCE(AVG(duration_minutes), 0) AS avg_duration
              FROM sessions
              GROUP BY agent
              ORDER BY sessions DESC",
-        ).context("failed to prepare agent stats")?;
+            )
+            .context("failed to prepare agent stats")?;
 
         let rows = stmt
             .query_map([], |row| {
@@ -3219,7 +3243,11 @@ mod tests {
         store.insert_memory(&mem).unwrap();
 
         // Update both content and confidence simultaneously
-        assert!(store.update_memory("m-both", Some("new content"), Some(0.99)).unwrap());
+        assert!(
+            store
+                .update_memory("m-both", Some("new content"), Some(0.99))
+                .unwrap()
+        );
         let fetched = store.get_memory("m-both").unwrap().unwrap();
         assert_eq!(fetched.content, "new content");
         assert_eq!(fetched.confidence, 0.99);
@@ -3342,9 +3370,15 @@ mod tests {
         let store = DuckStore::open_in_memory().unwrap();
 
         // Create a chain: f1 -> f2 -> f3
-        store.insert_fact(&make_fact("f-1", "db", "uses", "SQLite")).unwrap();
-        store.upsert_fact(&make_fact("f-2", "db", "uses", "Postgres")).unwrap();
-        store.upsert_fact(&make_fact("f-3", "db", "uses", "DuckDB")).unwrap();
+        store
+            .insert_fact(&make_fact("f-1", "db", "uses", "SQLite"))
+            .unwrap();
+        store
+            .upsert_fact(&make_fact("f-2", "db", "uses", "Postgres"))
+            .unwrap();
+        store
+            .upsert_fact(&make_fact("f-3", "db", "uses", "DuckDB"))
+            .unwrap();
 
         // Only the latest should be active
         let active = store.get_active_facts(None, 100).unwrap();
