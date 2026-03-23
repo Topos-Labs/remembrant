@@ -63,8 +63,10 @@ impl std::fmt::Display for ResultType {
 /// Weights for combining scores from different backends.
 #[derive(Debug, Clone)]
 pub struct HybridWeights {
-    /// Weight for DuckDB text match (ILIKE).
+    /// Weight for DuckDB text match (ILIKE fallback).
     pub text_weight: f64,
+    /// Weight for BM25 full-text search (DuckDB FTS extension).
+    pub bm25_weight: f64,
     /// Weight for LanceDB vector similarity.
     pub vector_weight: f64,
     /// Weight for graph proximity (connected to relevant nodes).
@@ -81,8 +83,9 @@ pub struct HybridWeights {
 impl Default for HybridWeights {
     fn default() -> Self {
         Self {
-            text_weight: 0.3,
-            vector_weight: 0.5,
+            text_weight: 0.2,
+            bm25_weight: 0.4,
+            vector_weight: 0.4,
             graph_weight: 0.2,
             xpath_weight: 0.4,
             recency_boost: 1.1,
@@ -285,7 +288,15 @@ impl<'a> HybridSearch<'a> {
     ) -> Result<Vec<HybridResult>> {
         let mut ranked_lists: Vec<(Vec<RankedResult>, f64)> = Vec::new();
 
-        // --- Layer 1: DuckDB text search ---
+        // --- Layer 1a: BM25 full-text search (if FTS indexes are available) ---
+        if self.duck.has_fts() {
+            let bm25_results = self.search_bm25_ranked(query)?;
+            if !bm25_results.is_empty() {
+                ranked_lists.push((bm25_results, self.weights.bm25_weight));
+            }
+        }
+
+        // --- Layer 1b: DuckDB ILIKE text search (fallback / complement) ---
         let text_results = self.search_text_ranked(query)?;
         if !text_results.is_empty() {
             ranked_lists.push((text_results, self.weights.text_weight));
@@ -333,10 +344,23 @@ impl<'a> HybridSearch<'a> {
     }
 
     /// Text-only search (no embeddings needed). Fast path for when LM Studio is down.
-    /// Uses confidence-weighted scoring internally.
+    /// Uses BM25 when FTS indexes are available, falls back to ILIKE otherwise.
     pub fn search_text_only(&self, query: &str, limit: usize) -> Result<Vec<HybridResult>> {
+        let mut ranked_lists: Vec<(Vec<RankedResult>, f64)> = Vec::new();
+
+        if self.duck.has_fts() {
+            let bm25_results = self.search_bm25_ranked(query)?;
+            if !bm25_results.is_empty() {
+                ranked_lists.push((bm25_results, 0.7));
+            }
+        }
+
         let text_results = self.search_text_ranked(query)?;
-        let mut results = merge_rrf(&[(text_results, 1.0)], self.weights.rrf_k);
+        if !text_results.is_empty() {
+            ranked_lists.push((text_results, 0.3));
+        }
+
+        let mut results = merge_rrf(&ranked_lists, self.weights.rrf_k);
         self.apply_recency_boost_vec(&mut results);
         results.truncate(limit);
 
@@ -495,6 +519,139 @@ impl<'a> HybridSearch<'a> {
         let escaped = query.replace('"', "'");
         let xpath_expr = format!(r#"//*[node~"{escaped}"]"#);
         self.search_xpath(&xpath_expr, limit)
+    }
+
+    // -----------------------------------------------------------------------
+    // Internal: BM25 search layer (returns ranked list for RRF)
+    // -----------------------------------------------------------------------
+
+    fn search_bm25_ranked(&self, query: &str) -> Result<Vec<RankedResult>> {
+        let mut results: Vec<RankedResult> = Vec::new();
+
+        // BM25 sessions
+        if let Ok(sessions) = self.duck.search_sessions_fts(query) {
+            for (s, score) in sessions {
+                let mut meta = HashMap::new();
+                meta.insert("agent".to_string(), s.agent.clone());
+                if let Some(ref p) = s.project_id {
+                    meta.insert("project".to_string(), p.clone());
+                }
+                if let Some(ref t) = s.started_at {
+                    meta.insert("started_at".to_string(), t.to_string());
+                }
+                results.push(RankedResult {
+                    id: s.id,
+                    content: s.summary.unwrap_or_default(),
+                    result_type: ResultType::Session,
+                    raw_score: score,
+                    sources: vec!["duckdb_bm25".to_string()],
+                    metadata: meta,
+                });
+            }
+        }
+
+        // BM25 memories
+        if let Ok(memories) = self.duck.search_memories_fts(query) {
+            for (m, score) in memories {
+                let mut meta = HashMap::new();
+                if let Some(ref t) = m.memory_type {
+                    meta.insert("type".to_string(), t.clone());
+                }
+                if let Some(ref t) = m.created_at {
+                    meta.insert("created_at".to_string(), t.to_string());
+                }
+                meta.insert("confidence".to_string(), m.confidence.to_string());
+                results.push(RankedResult {
+                    id: m.id,
+                    content: m.content,
+                    result_type: ResultType::Memory,
+                    raw_score: score * m.confidence as f64,
+                    sources: vec!["duckdb_bm25".to_string()],
+                    metadata: meta,
+                });
+            }
+        }
+
+        // BM25 facts
+        if let Ok(facts) = self.duck.search_facts_fts(query) {
+            for (f, score) in facts {
+                let content = format!("{} {} {}", f.subject, f.predicate, f.object);
+                let mut meta = HashMap::new();
+                meta.insert("subject".to_string(), f.subject);
+                meta.insert("predicate".to_string(), f.predicate);
+                meta.insert("object".to_string(), f.object);
+                meta.insert("confidence".to_string(), f.confidence.to_string());
+                if let Some(ref t) = f.valid_at {
+                    meta.insert("valid_at".to_string(), t.to_string());
+                }
+                results.push(RankedResult {
+                    id: f.id,
+                    content,
+                    result_type: ResultType::Fact,
+                    raw_score: score * f.confidence as f64,
+                    sources: vec!["duckdb_bm25".to_string()],
+                    metadata: meta,
+                });
+            }
+        }
+
+        // BM25 decisions
+        if let Ok(decisions) = self.duck.search_decisions_fts(query) {
+            for (d, score) in decisions {
+                let mut meta = HashMap::new();
+                if let Some(ref p) = d.project_id {
+                    meta.insert("project".to_string(), p.clone());
+                }
+                if let Some(ref t) = d.created_at {
+                    meta.insert("created_at".to_string(), t.to_string());
+                }
+                results.push(RankedResult {
+                    id: d.id,
+                    content: d.what,
+                    result_type: ResultType::Decision,
+                    raw_score: score,
+                    sources: vec!["duckdb_bm25".to_string()],
+                    metadata: meta,
+                });
+            }
+        }
+
+        // BM25 code symbols (identifier-exact matches, no stemming)
+        if let Ok(symbols) = self.duck.search_code_symbols_fts(query) {
+            for (sym, score) in symbols {
+                let content = format!(
+                    "{} {} ({}:{})",
+                    sym.symbol_kind, sym.symbol_name, sym.file_path, sym.start_line
+                );
+                let mut meta = HashMap::new();
+                meta.insert("file_path".to_string(), sym.file_path);
+                meta.insert("kind".to_string(), sym.symbol_kind);
+                meta.insert("start_line".to_string(), sym.start_line.to_string());
+                if let Some(ref sig) = sym.signature {
+                    meta.insert("signature".to_string(), sig.clone());
+                }
+                // Boost by PageRank — more important symbols rank higher
+                let pagerank_boost = 1.0 + sym.pagerank_score;
+                results.push(RankedResult {
+                    id: sym.id,
+                    content,
+                    result_type: ResultType::CodeEntity,
+                    raw_score: score * pagerank_boost,
+                    sources: vec!["duckdb_bm25".to_string()],
+                    metadata: meta,
+                });
+            }
+        }
+
+        // Sort by BM25 score descending
+        results.sort_by(|a, b| {
+            b.raw_score
+                .partial_cmp(&a.raw_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        debug!(results = results.len(), "BM25 search layer complete");
+        Ok(results)
     }
 
     // -----------------------------------------------------------------------
@@ -882,6 +1039,7 @@ mod tests {
         // Higher text weight => higher scores
         let search = HybridSearch::new(&store).with_weights(HybridWeights {
             text_weight: 0.9,
+            bm25_weight: 0.0,
             vector_weight: 0.0,
             graph_weight: 0.0,
             xpath_weight: 0.0,

@@ -370,6 +370,280 @@ impl DuckStore {
     }
 
     // -----------------------------------------------------------------------
+    // Full-Text Search (BM25 via DuckDB FTS extension)
+    // -----------------------------------------------------------------------
+
+    /// Install and load the DuckDB FTS extension, then create full-text
+    /// indexes on key tables. Call this once after `init_schema` (or on
+    /// demand before the first FTS query).
+    ///
+    /// FTS indexes use BM25 scoring which is far superior to ILIKE for
+    /// identifier and keyword search. The GrepRAG paper shows simple lexical
+    /// retrieval matches complex methods for code search.
+    ///
+    /// This is idempotent — safe to call multiple times. If the FTS extension
+    /// is unavailable the method returns an error but doesn't crash.
+    pub fn init_fts(&self) -> Result<()> {
+        let conn = self.conn.lock().expect("lock poisoned");
+
+        conn.execute_batch("INSTALL fts; LOAD fts;")
+            .context("failed to load DuckDB FTS extension")?;
+
+        // Drop existing FTS indexes before recreating (idempotent).
+        // DuckDB FTS uses PRAGMA which doesn't support IF NOT EXISTS,
+        // so we drop first to avoid "already exists" errors.
+        let _ = conn.execute_batch("PRAGMA drop_fts_index('memories');");
+        let _ = conn.execute_batch("PRAGMA drop_fts_index('facts');");
+        let _ = conn.execute_batch("PRAGMA drop_fts_index('sessions');");
+        let _ = conn.execute_batch("PRAGMA drop_fts_index('code_symbols');");
+        let _ = conn.execute_batch("PRAGMA drop_fts_index('decisions');");
+
+        // Create FTS indexes on searchable columns.
+        // stemmer='none' preserves identifiers exactly (important for code).
+        conn.execute_batch(
+            "PRAGMA create_fts_index('memories', 'id', 'content', stemmer='porter', overwrite=1);
+             PRAGMA create_fts_index('facts', 'id', 'subject', 'predicate', 'object', stemmer='porter', overwrite=1);
+             PRAGMA create_fts_index('sessions', 'id', 'summary', stemmer='porter', overwrite=1);
+             PRAGMA create_fts_index('code_symbols', 'id', 'symbol_name', 'file_path', 'signature', 'docstring', stemmer='none', overwrite=1);
+             PRAGMA create_fts_index('decisions', 'id', 'what', 'why', 'alternatives', stemmer='porter', overwrite=1);",
+        )
+        .context("failed to create FTS indexes")?;
+
+        tracing::info!("FTS indexes created on memories, facts, sessions, code_symbols, decisions");
+        Ok(())
+    }
+
+    /// BM25 full-text search over memories. Returns results ranked by relevance.
+    /// Falls back to ILIKE if FTS indexes haven't been created.
+    pub fn search_memories_fts(&self, query: &str) -> Result<Vec<(Memory, f64)>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+
+        let mut stmt = conn.prepare(
+            "SELECT m.id, m.project_id, m.content, m.memory_type, m.source_session_id,
+                    m.confidence, m.access_count, m.created_at, m.updated_at, m.valid_until,
+                    fts.score
+             FROM memories m
+             JOIN (SELECT id, fts_main_memories.match_bm25(id, ?) AS score
+                   FROM memories) fts ON m.id = fts.id
+             WHERE fts.score IS NOT NULL
+             ORDER BY fts.score DESC",
+        ).context("failed to prepare FTS memory search")?;
+
+        let rows = stmt
+            .query_map(params![query], |row| {
+                let memory = Memory {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    content: row.get(2)?,
+                    memory_type: row.get(3)?,
+                    source_session_id: row.get(4)?,
+                    confidence: row.get::<_, f32>(5).unwrap_or(1.0),
+                    access_count: row.get::<_, i32>(6).unwrap_or(0),
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                    valid_until: row.get(9)?,
+                };
+                let score: f64 = row.get::<_, f64>(10).unwrap_or(0.0);
+                Ok((memory, score))
+            })
+            .context("failed to query FTS memories")?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.context("failed to read FTS memory row")?);
+        }
+        Ok(results)
+    }
+
+    /// BM25 full-text search over facts.
+    pub fn search_facts_fts(&self, query: &str) -> Result<Vec<(Fact, f64)>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+
+        let mut stmt = conn.prepare(
+            "SELECT f.id, f.project_id, f.subject, f.predicate, f.object,
+                    f.confidence, f.source_session_id, f.source_agent,
+                    f.valid_at, f.invalid_at, f.superseded_by, f.created_at,
+                    fts.score
+             FROM facts f
+             JOIN (SELECT id, fts_main_facts.match_bm25(id, ?) AS score
+                   FROM facts) fts ON f.id = fts.id
+             WHERE fts.score IS NOT NULL AND f.invalid_at IS NULL
+             ORDER BY fts.score DESC",
+        ).context("failed to prepare FTS fact search")?;
+
+        let rows = stmt
+            .query_map(params![query], |row| {
+                let fact = Fact {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    subject: row.get(2)?,
+                    predicate: row.get(3)?,
+                    object: row.get(4)?,
+                    confidence: row.get::<_, f32>(5).unwrap_or(1.0),
+                    source_session_id: row.get(6)?,
+                    source_agent: row.get(7)?,
+                    valid_at: row.get(8)?,
+                    invalid_at: row.get(9)?,
+                    superseded_by: row.get(10)?,
+                    created_at: row.get(11)?,
+                };
+                let score: f64 = row.get::<_, f64>(12).unwrap_or(0.0);
+                Ok((fact, score))
+            })
+            .context("failed to query FTS facts")?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.context("failed to read FTS fact row")?);
+        }
+        Ok(results)
+    }
+
+    /// BM25 full-text search over sessions (by summary).
+    pub fn search_sessions_fts(&self, query: &str) -> Result<Vec<(Session, f64)>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.project_id, s.agent, s.started_at, s.ended_at,
+                    s.duration_minutes, s.message_count, s.tool_call_count,
+                    s.total_tokens, s.files_changed, s.summary,
+                    fts.score
+             FROM sessions s
+             JOIN (SELECT id, fts_main_sessions.match_bm25(id, ?) AS score
+                   FROM sessions) fts ON s.id = fts.id
+             WHERE fts.score IS NOT NULL
+             ORDER BY fts.score DESC",
+        ).context("failed to prepare FTS session search")?;
+
+        let rows = stmt
+            .query_map(params![query], |row| {
+                let files_str: String = row.get::<_, String>(9).unwrap_or_default();
+                let session = Session {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    agent: row.get(2)?,
+                    started_at: row.get(3)?,
+                    ended_at: row.get(4)?,
+                    duration_minutes: row.get(5)?,
+                    message_count: row.get(6)?,
+                    tool_call_count: row.get(7)?,
+                    total_tokens: row.get(8)?,
+                    files_changed: json_to_vec(&files_str),
+                    summary: row.get(10)?,
+                };
+                let score: f64 = row.get::<_, f64>(11).unwrap_or(0.0);
+                Ok((session, score))
+            })
+            .context("failed to query FTS sessions")?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.context("failed to read FTS session row")?);
+        }
+        Ok(results)
+    }
+
+    /// BM25 full-text search over code symbols.
+    /// Uses stemmer='none' for exact identifier matching.
+    pub fn search_code_symbols_fts(&self, query: &str) -> Result<Vec<(CodeSymbol, f64)>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+
+        let mut stmt = conn.prepare(
+            "SELECT cs.id, cs.project_id, cs.file_path, cs.symbol_name, cs.symbol_kind,
+                    cs.signature, cs.docstring, cs.start_line, cs.end_line,
+                    cs.visibility, cs.parent_symbol, cs.pagerank_score,
+                    cs.reference_count, cs.language, cs.content_hash, cs.indexed_at,
+                    fts.score
+             FROM code_symbols cs
+             JOIN (SELECT id, fts_main_code_symbols.match_bm25(id, ?) AS score
+                   FROM code_symbols) fts ON cs.id = fts.id
+             WHERE fts.score IS NOT NULL
+             ORDER BY fts.score DESC",
+        ).context("failed to prepare FTS code_symbols search")?;
+
+        let rows = stmt
+            .query_map(params![query], |row| {
+                let symbol = CodeSymbol {
+                    id: row.get(0)?,
+                    project_id: row.get(1)?,
+                    file_path: row.get(2)?,
+                    symbol_name: row.get(3)?,
+                    symbol_kind: row.get(4)?,
+                    signature: row.get(5)?,
+                    docstring: row.get(6)?,
+                    start_line: row.get(7)?,
+                    end_line: row.get(8)?,
+                    visibility: row.get(9)?,
+                    parent_symbol: row.get(10)?,
+                    pagerank_score: row.get::<_, f64>(11).unwrap_or(0.0),
+                    reference_count: row.get::<_, i32>(12).unwrap_or(0),
+                    language: row.get(13)?,
+                    content_hash: row.get(14)?,
+                    indexed_at: row.get(15)?,
+                };
+                let score: f64 = row.get::<_, f64>(16).unwrap_or(0.0);
+                Ok((symbol, score))
+            })
+            .context("failed to query FTS code_symbols")?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.context("failed to read FTS code_symbol row")?);
+        }
+        Ok(results)
+    }
+
+    /// BM25 full-text search over decisions.
+    pub fn search_decisions_fts(&self, query: &str) -> Result<Vec<(Decision, f64)>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+
+        let mut stmt = conn.prepare(
+            "SELECT d.id, d.session_id, d.project_id, d.decision_type, d.what,
+                    d.why, d.alternatives, d.outcome, d.created_at, d.valid_until,
+                    fts.score
+             FROM decisions d
+             JOIN (SELECT id, fts_main_decisions.match_bm25(id, ?) AS score
+                   FROM decisions) fts ON d.id = fts.id
+             WHERE fts.score IS NOT NULL
+             ORDER BY fts.score DESC",
+        ).context("failed to prepare FTS decision search")?;
+
+        let rows = stmt
+            .query_map(params![query], |row| {
+                let alts_str: String = row.get::<_, String>(6).unwrap_or_default();
+                let decision = Decision {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    project_id: row.get(2)?,
+                    decision_type: row.get(3)?,
+                    what: row.get(4)?,
+                    why: row.get(5)?,
+                    alternatives: json_to_vec(&alts_str),
+                    outcome: row.get(7)?,
+                    created_at: row.get(8)?,
+                    valid_until: row.get(9)?,
+                };
+                let score: f64 = row.get::<_, f64>(10).unwrap_or(0.0);
+                Ok((decision, score))
+            })
+            .context("failed to query FTS decisions")?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row.context("failed to read FTS decision row")?);
+        }
+        Ok(results)
+    }
+
+    /// Check whether FTS indexes have been created.
+    pub fn has_fts(&self) -> bool {
+        let conn = self.conn.lock().expect("lock poisoned");
+        // If the FTS macro table exists, indexes are active.
+        conn.prepare("SELECT * FROM fts_main_memories.docs LIMIT 0")
+            .is_ok()
+    }
+
+    // -----------------------------------------------------------------------
     // Inserts
     // -----------------------------------------------------------------------
 

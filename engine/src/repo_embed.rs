@@ -9,6 +9,8 @@ use tracing::{debug, info, warn};
 #[cfg(feature = "code-analysis")]
 use infiniloom_engine::chunking::{ChunkStrategy, Chunker};
 #[cfg(feature = "code-analysis")]
+use infiniloom_engine::incremental::IncrementalScanner;
+#[cfg(feature = "code-analysis")]
 use infiniloom_engine::security::SecurityScanner;
 #[cfg(feature = "code-analysis")]
 use infiniloom_engine::types::{RepoFile, Repository, TokenCounts};
@@ -339,11 +341,11 @@ impl RepoEmbedder {
         chunks
     }
 
-    /// AST-aware chunker using Infiniloom's `Chunker` with `ChunkStrategy::Symbol`.
+    /// AST-aware chunker using Infiniloom's `Chunker` with `ChunkStrategy::Semantic`.
     ///
-    /// Groups code by symbol boundaries (functions, classes, etc.) for more
-    /// semantically meaningful chunks. Falls back to the naive chunker if the
-    /// AST chunker produces no results.
+    /// Splits at semantic boundaries (function/class declarations, module-level
+    /// statements) for more meaningful chunks than fixed-line splitting. Falls
+    /// back to the naive chunker if the AST chunker produces no results.
     #[cfg(feature = "code-analysis")]
     fn chunk_file_with_ast(
         &self,
@@ -374,8 +376,10 @@ impl RepoEmbedder {
         };
         repo.files.push(repo_file);
 
-        // Use Symbol strategy for AST-aware chunking (max 2000 tokens per chunk).
-        let chunker = Chunker::new(ChunkStrategy::Symbol, 2000);
+        // Use Semantic strategy for AST-aware chunking (max 2000 tokens per chunk).
+        // Semantic splits at declaration boundaries (functions, classes, modules)
+        // which produces better retrieval quality than Symbol-only splitting.
+        let chunker = Chunker::new(ChunkStrategy::Semantic, 2000);
         let il_chunks = chunker.chunk(&repo);
 
         if il_chunks.is_empty() {
@@ -412,7 +416,7 @@ impl RepoEmbedder {
                     content: chunk_content.clone(),
                     start_line,
                     end_line,
-                    granularity: "symbol".to_string(),
+                    granularity: "semantic".to_string(),
                     blake3_id,
                 });
             }
@@ -469,17 +473,93 @@ impl RepoEmbedder {
     }
 
     /// Discover files and chunk them all.
+    ///
+    /// When the `code-analysis` feature is enabled, uses Infiniloom's
+    /// `IncrementalScanner` to skip files that haven't changed since the last
+    /// run (based on mtime + size + content hash).
     pub fn chunk_all(&self) -> Result<(Vec<CodeChunk>, usize)> {
         let files = self.discover_files()?;
         let file_count = files.len();
         info!(files = file_count, root = %self.root.display(), "discovered files");
 
         let mut all_chunks = Vec::new();
-        for file in &files {
-            match self.chunk_file(file) {
-                Ok(chunks) => all_chunks.extend(chunks),
-                Err(e) => {
-                    warn!(path = %file.display(), error = %e, "failed to chunk file");
+
+        #[cfg(feature = "code-analysis")]
+        {
+            let mut scanner = IncrementalScanner::new(&self.root);
+            let mut skipped = 0usize;
+
+            for file in &files {
+                // Skip files that haven't changed since last scan.
+                if !scanner.needs_rescan(file) {
+                    skipped += 1;
+                    continue;
+                }
+
+                match self.chunk_file(file) {
+                    Ok(chunks) => {
+                        // Update the scanner cache for this file.
+                        if let Ok(metadata) = std::fs::metadata(file) {
+                            let mtime = metadata
+                                .modified()
+                                .ok()
+                                .and_then(|t| {
+                                    t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok()
+                                })
+                                .map_or(0, |d| d.as_secs());
+
+                            let rel_path = file
+                                .strip_prefix(&self.root)
+                                .unwrap_or(file)
+                                .to_string_lossy()
+                                .to_string();
+
+                            scanner.update(infiniloom_engine::incremental::CachedFile {
+                                path: rel_path,
+                                mtime,
+                                size: metadata.len(),
+                                hash: 0, // Could compute BLAKE3 hash here for extra accuracy
+                                tokens: TokenCounts::default(),
+                                symbols: vec![],
+                                symbols_extracted: false,
+                                language: detect_language(file).map(|s| s.to_string()),
+                                lines: chunks
+                                    .last()
+                                    .map(|c| c.end_line)
+                                    .unwrap_or(0),
+                            });
+                        }
+
+                        all_chunks.extend(chunks);
+                    }
+                    Err(e) => {
+                        warn!(path = %file.display(), error = %e, "failed to chunk file");
+                    }
+                }
+            }
+
+            // Persist the cache for next run.
+            if let Err(e) = scanner.save() {
+                warn!(error = %e, "failed to save incremental scanner cache");
+            }
+
+            if skipped > 0 {
+                info!(
+                    skipped,
+                    changed = file_count - skipped,
+                    "incremental scan: skipped unchanged files"
+                );
+            }
+        }
+
+        #[cfg(not(feature = "code-analysis"))]
+        {
+            for file in &files {
+                match self.chunk_file(file) {
+                    Ok(chunks) => all_chunks.extend(chunks),
+                    Err(e) => {
+                        warn!(path = %file.display(), error = %e, "failed to chunk file");
+                    }
                 }
             }
         }

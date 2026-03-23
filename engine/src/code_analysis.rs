@@ -2,17 +2,19 @@
 //! Gated behind the `code-analysis` feature flag.
 
 use anyhow::{Context, Result};
-use std::collections::HashMap;
+use chrono::Utc;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
-use crate::store::duckdb::DuckStore;
+use crate::store::duckdb::{
+    AnalysisRun, CodeDependency, CodeSymbol as DuckCodeSymbol, DuckStore,
+};
 use crate::store::graph::{EdgeKind, GraphEdge, GraphNode, GraphStoreBackend, NodeKind};
 
 // Import Infiniloom types
 use infiniloom_engine::index::builder::IndexBuilder;
-use infiniloom_engine::index::types::{DepGraph, IndexSymbol, SymbolIndex};
+use infiniloom_engine::index::types::{DepGraph, SymbolIndex};
 
 // Re-export for convenience
 pub use infiniloom_engine::index::types::Language;
@@ -29,43 +31,6 @@ pub struct AnalysisResult {
     pub symbols_extracted: usize,
     pub dependencies_found: usize,
     pub duration_ms: u64,
-}
-
-/// Code symbol stored in DuckDB
-#[derive(Debug, Clone)]
-pub struct CodeSymbol {
-    pub id: String,
-    pub project_id: String,
-    pub file_path: String,
-    pub name: String,
-    pub kind: String,
-    pub start_line: u32,
-    pub end_line: u32,
-    pub signature: Option<String>,
-    pub visibility: String,
-    pub parent_symbol: Option<String>,
-    pub language: Option<String>,
-}
-
-/// Code dependency edge
-#[derive(Debug, Clone)]
-pub struct CodeDependency {
-    pub id: String,
-    pub project_id: String,
-    pub from_symbol: String,
-    pub to_symbol: String,
-    pub dependency_type: String,
-}
-
-/// Analysis run metadata
-#[derive(Debug, Clone)]
-pub struct AnalysisRun {
-    pub id: String,
-    pub project_id: String,
-    pub files_analyzed: i32,
-    pub symbols_extracted: i32,
-    pub dependencies_found: i32,
-    pub duration_ms: i64,
 }
 
 impl CodeAnalyzer {
@@ -90,7 +55,7 @@ impl CodeAnalyzer {
 
         // Step 1: Clear existing symbols for this project (idempotent re-analysis)
         debug!("Clearing existing symbols for project: {}", self.project_id);
-        self.clear_existing_symbols(store)?;
+        store.clear_symbols_for_project(&self.project_id)?;
 
         // Step 2: Build index using Infiniloom's IndexBuilder
         info!("Building symbol index...");
@@ -105,11 +70,11 @@ impl CodeAnalyzer {
             index.symbols.len()
         );
 
-        // Step 3: Convert and store symbols in DuckDB
+        // Step 3: Store symbols in DuckDB
         debug!("Storing symbols in DuckDB...");
         let symbols_stored = self.store_symbols(store, &index)?;
 
-        // Step 4: Convert and store dependencies in DuckDB
+        // Step 4: Store dependencies in DuckDB
         debug!("Storing dependencies in DuckDB...");
         let deps_stored = self.store_dependencies(store, &index, &dep_graph)?;
 
@@ -124,13 +89,7 @@ impl CodeAnalyzer {
 
         // Step 6: Record analysis run
         let duration_ms = start.elapsed().as_millis() as u64;
-        self.record_analysis_run(
-            store,
-            index.files.len(),
-            symbols_stored,
-            deps_stored,
-            duration_ms,
-        )?;
+        self.record_analysis_run(store, &index, symbols_stored, deps_stored, duration_ms)?;
 
         Ok(AnalysisResult {
             files_analyzed: index.files.len(),
@@ -140,37 +99,57 @@ impl CodeAnalyzer {
         })
     }
 
-    /// Clear existing symbols for this project
-    fn clear_existing_symbols(&self, _store: &DuckStore) -> Result<()> {
-        // Since the tables don't exist yet, we'll implement this when DuckDB schema is extended
-        // For now, this is a no-op
-        Ok(())
-    }
-
-    /// Convert Infiniloom symbols to Remembrant CodeSymbol and store in DuckDB
-    fn store_symbols(&self, _store: &DuckStore, index: &SymbolIndex) -> Result<usize> {
+    /// Convert Infiniloom symbols to DuckDB CodeSymbol and store
+    fn store_symbols(&self, store: &DuckStore, index: &SymbolIndex) -> Result<usize> {
         let mut count = 0;
 
         for symbol in &index.symbols {
-            let file = index
-                .get_file_by_id(symbol.file_id.as_u32())
-                .context("Symbol references non-existent file")?;
+            let file = match index.get_file_by_id(symbol.file_id.as_u32()) {
+                Some(f) => f,
+                None => {
+                    warn!(symbol = %symbol.name, "symbol references non-existent file, skipping");
+                    continue;
+                }
+            };
 
-            let _code_symbol =
-                self.convert_symbol(&self.project_id, &file.path, symbol, Some(file.language));
+            let duck_symbol = DuckCodeSymbol {
+                id: format!(
+                    "symbol:{}:{}:{}:{}",
+                    self.project_id, file.path, symbol.name, symbol.span.start_line
+                ),
+                project_id: self.project_id.clone(),
+                file_path: file.path.clone(),
+                symbol_name: symbol.name.clone(),
+                symbol_kind: symbol.kind.name().to_string(),
+                signature: symbol.signature.clone(),
+                docstring: symbol.docstring.clone(),
+                start_line: symbol.span.start_line as i32,
+                end_line: symbol.span.end_line as i32,
+                visibility: Some(format!("{:?}", symbol.visibility).to_lowercase()),
+                parent_symbol: symbol.parent.map(|p| p.to_string()),
+                pagerank_score: 0.0, // Will be updated by PageRank pass
+                reference_count: 0,  // Will be updated after dep graph analysis
+                language: Some(file.language.name().to_string()),
+                content_hash: None, // Set during embedding pass
+                indexed_at: Some(Utc::now().naive_utc()),
+            };
 
-            // Store in DuckDB (when tables are added by other agent)
-            // For now, we just count
+            if let Err(e) = store.insert_code_symbol(&duck_symbol) {
+                warn!(symbol = %symbol.name, error = %e, "failed to insert symbol");
+                continue;
+            }
             count += 1;
         }
 
+        info!(count, "symbols stored in DuckDB");
         Ok(count)
     }
 
-    /// Convert Infiniloom dependencies to Remembrant CodeDependency and store
+    /// Convert Infiniloom dependencies to DuckDB CodeDependency and store.
+    /// Handles calls, file imports, and symbol-level extends/implements relationships.
     fn store_dependencies(
         &self,
-        _store: &DuckStore,
+        store: &DuckStore,
         index: &SymbolIndex,
         dep_graph: &DepGraph,
     ) -> Result<usize> {
@@ -181,51 +160,64 @@ impl CodeAnalyzer {
             if let (Some(caller), Some(callee)) =
                 (index.get_symbol(*caller_id), index.get_symbol(*callee_id))
             {
-                let _dep = CodeDependency {
-                    id: format!("{}:{}:{}", self.project_id, caller_id, callee_id),
-                    project_id: self.project_id.clone(),
-                    from_symbol: format!("{}:{}", caller.file_id.as_u32(), caller.name),
-                    to_symbol: format!("{}:{}", callee.file_id.as_u32(), callee.name),
-                    dependency_type: "call".to_string(),
+                let caller_file = match index.get_file_by_id(caller.file_id.as_u32()) {
+                    Some(f) => f,
+                    None => continue,
                 };
-                // Store in DuckDB (when tables are added)
+                let callee_file = match index.get_file_by_id(callee.file_id.as_u32()) {
+                    Some(f) => f,
+                    None => continue,
+                };
+
+                let dep = CodeDependency {
+                    id: format!("dep:call:{}:{}:{}", self.project_id, caller_id, callee_id),
+                    project_id: self.project_id.clone(),
+                    from_symbol: format!("{}:{}", caller_file.path, caller.name),
+                    to_symbol: format!("{}:{}", callee_file.path, callee.name),
+                    relationship: "calls".to_string(),
+                    from_file: caller_file.path.clone(),
+                    to_file: callee_file.path.clone(),
+                };
+
+                if let Err(e) = store.insert_code_dependency(&dep) {
+                    debug!(error = %e, "failed to insert call dependency");
+                }
                 count += 1;
             }
         }
 
         // Store file import edges
-        for (_from_file, _to_file) in &dep_graph.file_imports {
-            // Create dependency record
-            count += 1;
+        for (from_file_id, to_file_id) in &dep_graph.file_imports {
+            if let (Some(from_file), Some(to_file)) = (
+                index.get_file_by_id(*from_file_id),
+                index.get_file_by_id(*to_file_id),
+            ) {
+                let dep = CodeDependency {
+                    id: format!(
+                        "dep:import:{}:{}:{}",
+                        self.project_id, from_file_id, to_file_id
+                    ),
+                    project_id: self.project_id.clone(),
+                    from_symbol: from_file.path.clone(),
+                    to_symbol: to_file.path.clone(),
+                    relationship: "imports".to_string(),
+                    from_file: from_file.path.clone(),
+                    to_file: to_file.path.clone(),
+                };
+
+                if let Err(e) = store.insert_code_dependency(&dep) {
+                    debug!(error = %e, "failed to insert import dependency");
+                }
+                count += 1;
+            }
         }
 
+        // NOTE: IndexSymbol (v0.7) doesn't have extends/implements fields.
+        // Those are in the higher-level Symbol type. When Infiniloom exposes them
+        // via IndexBuilder, we can wire inherits/implements edges here.
+
+        info!(count, "dependencies stored in DuckDB");
         Ok(count)
-    }
-
-    /// Convert an Infiniloom IndexSymbol to Remembrant's CodeSymbol
-    fn convert_symbol(
-        &self,
-        project_id: &str,
-        file_path: &str,
-        symbol: &IndexSymbol,
-        language: Option<Language>,
-    ) -> CodeSymbol {
-        CodeSymbol {
-            id: format!(
-                "symbol:{}:{}:{}:{}",
-                project_id, file_path, symbol.name, symbol.span.start_line
-            ),
-            project_id: project_id.to_string(),
-            file_path: file_path.to_string(),
-            name: symbol.name.clone(),
-            kind: symbol.kind.name().to_string(),
-            start_line: symbol.span.start_line,
-            end_line: symbol.span.end_line,
-            signature: symbol.signature.clone(),
-            visibility: format!("{:?}", symbol.visibility).to_lowercase(),
-            parent_symbol: symbol.parent.map(|p| p.to_string()),
-            language: language.map(|l| l.name().to_string()),
-        }
     }
 
     /// Populate the graph store with nodes and edges
@@ -240,16 +232,17 @@ impl CodeAnalyzer {
 
         // Create Symbol nodes for each symbol
         for symbol in &index.symbols {
-            let file = index
-                .get_file_by_id(symbol.file_id.as_u32())
-                .context("Symbol references non-existent file")?;
+            let file = match index.get_file_by_id(symbol.file_id.as_u32()) {
+                Some(f) => f,
+                None => continue,
+            };
 
             let node_id = format!(
                 "symbol:{}:{}:{}:{}",
                 self.project_id, file.path, symbol.name, symbol.span.start_line
             );
 
-            let mut properties = HashMap::new();
+            let mut properties = std::collections::HashMap::new();
             properties.insert("file_path".to_string(), file.path.clone());
             properties.insert("kind".to_string(), symbol.kind.name().to_string());
             properties.insert("start_line".to_string(), symbol.span.start_line.to_string());
@@ -261,6 +254,9 @@ impl CodeAnalyzer {
 
             if let Some(sig) = &symbol.signature {
                 properties.insert("signature".to_string(), sig.clone());
+            }
+            if let Some(doc) = &symbol.docstring {
+                properties.insert("docstring".to_string(), doc.clone());
             }
 
             let node = GraphNode {
@@ -278,7 +274,7 @@ impl CodeAnalyzer {
         for file in &index.files {
             let node_id = format!("file:{}", file.path);
 
-            let mut properties = HashMap::new();
+            let mut properties = std::collections::HashMap::new();
             properties.insert("path".to_string(), file.path.clone());
             properties.insert("language".to_string(), file.language.name().to_string());
             properties.insert("lines".to_string(), file.lines.to_string());
@@ -306,7 +302,7 @@ impl CodeAnalyzer {
                         from_id: node_id.clone(),
                         to_id: symbol_id,
                         kind: EdgeKind::Defines,
-                        properties: HashMap::new(),
+                        properties: std::collections::HashMap::new(),
                     };
 
                     graph_store.add_edge(&edge)?;
@@ -320,12 +316,14 @@ impl CodeAnalyzer {
             if let (Some(caller), Some(callee)) =
                 (index.get_symbol(*caller_id), index.get_symbol(*callee_id))
             {
-                let caller_file = index
-                    .get_file_by_id(caller.file_id.as_u32())
-                    .context("Caller symbol references non-existent file")?;
-                let callee_file = index
-                    .get_file_by_id(callee.file_id.as_u32())
-                    .context("Callee symbol references non-existent file")?;
+                let caller_file = match index.get_file_by_id(caller.file_id.as_u32()) {
+                    Some(f) => f,
+                    None => continue,
+                };
+                let callee_file = match index.get_file_by_id(callee.file_id.as_u32()) {
+                    Some(f) => f,
+                    None => continue,
+                };
 
                 let caller_node_id = format!(
                     "symbol:{}:{}:{}:{}",
@@ -340,7 +338,7 @@ impl CodeAnalyzer {
                     from_id: caller_node_id,
                     to_id: callee_node_id,
                     kind: EdgeKind::Calls,
-                    properties: HashMap::new(),
+                    properties: std::collections::HashMap::new(),
                 };
 
                 graph_store.add_edge(&edge)?;
@@ -361,7 +359,7 @@ impl CodeAnalyzer {
                     from_id: from_node_id,
                     to_id: to_node_id,
                     kind: EdgeKind::DependsOn,
-                    properties: HashMap::new(),
+                    properties: std::collections::HashMap::new(),
                 };
 
                 graph_store.add_edge(&edge)?;
@@ -375,16 +373,28 @@ impl CodeAnalyzer {
     /// Record the analysis run in DuckDB
     fn record_analysis_run(
         &self,
-        _store: &DuckStore,
-        files_analyzed: usize,
+        store: &DuckStore,
+        index: &SymbolIndex,
         symbols_extracted: usize,
         dependencies_found: usize,
         duration_ms: u64,
     ) -> Result<()> {
-        // When DuckDB tables are added, store the analysis run record
+        let run = AnalysisRun {
+            project_id: self.project_id.clone(),
+            commit_hash: None, // TODO: extract from git
+            files_analyzed: index.files.len() as i32,
+            symbols_extracted: symbols_extracted as i32,
+            dependencies_found: dependencies_found as i32,
+            chunks_generated: 0,
+            duration_ms: duration_ms as i32,
+            analyzed_at: Some(Utc::now().naive_utc()),
+        };
+
+        store.insert_analysis_run(&run)?;
+
         info!(
             "Analysis complete: {} files, {} symbols, {} deps in {}ms",
-            files_analyzed, symbols_extracted, dependencies_found, duration_ms
+            run.files_analyzed, symbols_extracted, dependencies_found, duration_ms
         );
         Ok(())
     }
@@ -393,42 +403,10 @@ impl CodeAnalyzer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use tempfile::TempDir;
 
     #[test]
     fn test_analyzer_creation() {
         let analyzer = CodeAnalyzer::new("test-project", "/tmp/test");
         assert_eq!(analyzer.project_id, "test-project");
-    }
-
-    #[test]
-    fn test_convert_symbol() {
-        use infiniloom_engine::index::types::{
-            FileId, IndexSymbol, IndexSymbolKind, Span, SymbolId, Visibility,
-        };
-
-        let analyzer = CodeAnalyzer::new("test-project", "/tmp/test");
-
-        let symbol = IndexSymbol {
-            id: SymbolId::new(0),
-            name: "test_function".to_string(),
-            kind: IndexSymbolKind::Function,
-            file_id: FileId::new(0),
-            span: Span::new(10, 0, 20, 0),
-            signature: Some("fn test_function()".to_string()),
-            parent: None,
-            visibility: Visibility::Public,
-            docstring: None,
-        };
-
-        let code_symbol =
-            analyzer.convert_symbol("test-project", "src/main.rs", &symbol, Some(Language::Rust));
-
-        assert_eq!(code_symbol.name, "test_function");
-        assert_eq!(code_symbol.kind, "function");
-        assert_eq!(code_symbol.start_line, 10);
-        assert_eq!(code_symbol.end_line, 20);
-        assert_eq!(code_symbol.language, Some("rust".to_string()));
     }
 }

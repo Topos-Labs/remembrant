@@ -19,8 +19,6 @@ use remembrant_engine::embed_pipeline::EmbedPipeline;
 use remembrant_engine::embedding::{EmbedProvider, LmStudioEmbedder};
 use remembrant_engine::graph_builder::{self, GraphBackend, GraphBuilder};
 use remembrant_engine::repo_embed::RepoEmbedder;
-#[cfg(feature = "code-analysis")]
-use remembrant_engine::store::GraphStoreBackend;
 use remembrant_engine::store::{DuckStore, LanceStore};
 use remembrant_engine::{AppConfig, ClaudeIngester, CodexIngester, GeminiIngester, detect_agents};
 use tower_http::cors::CorsLayer;
@@ -324,7 +322,15 @@ fn open_store(config: &AppConfig) -> Result<DuckStore> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create directory {}", parent.display()))?;
     }
-    DuckStore::open(&db_path)
+    let store = DuckStore::open(&db_path)?;
+
+    // Try to initialize FTS indexes for BM25 search. Non-fatal if the
+    // FTS extension is unavailable (falls back to ILIKE).
+    if let Err(e) = store.init_fts() {
+        tracing::debug!("FTS extension not available, falling back to ILIKE: {e}");
+    }
+
+    Ok(store)
 }
 
 /// Return the path to the PID file.
@@ -2140,10 +2146,10 @@ fn cmd_analyze(path: &str, project: Option<&str>) -> Result<()> {
 
         let analyzer = CodeAnalyzer::new(&project_id, &repo_path);
 
-        // Build a graph store for population
-        let graph = build_graph(&store)?;
+        // Use an in-memory graph store for code analysis population
+        let graph_store = remembrant_engine::store::graph::GraphStore::new();
 
-        let result = analyzer.analyze(&store, graph.store())?;
+        let result = analyzer.analyze(&store, &graph_store)?;
 
         println!("\nAnalysis complete:");
         println!("  Files analyzed:    {}", result.files_analyzed);
