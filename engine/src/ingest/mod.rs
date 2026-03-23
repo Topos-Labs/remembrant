@@ -1,12 +1,24 @@
+pub mod adapter;
 pub mod claude;
 pub mod codex;
 pub mod gemini;
+pub mod native_adapters;
+#[cfg(feature = "sqlite-adapters")]
+pub mod sqlite_adapter;
 
 use serde::{Deserialize, Serialize};
 
+pub use adapter::{
+    AdapterRegistry, AgentAdapter, AgentMeta, DynamicAgentConfig, IngestOutput,
+};
 pub use claude::ClaudeIngester;
 pub use codex::CodexIngester;
 pub use gemini::GeminiIngester;
+pub use native_adapters::{
+    build_default_registry, ClaudeAdapter, CodexAdapter, GeminiAdapter,
+};
+#[cfg(feature = "sqlite-adapters")]
+pub use sqlite_adapter::GenericSqliteAdapter;
 
 /// Summary of what an ingestion pass discovered and parsed.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

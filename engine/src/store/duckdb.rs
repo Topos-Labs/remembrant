@@ -2284,6 +2284,183 @@ impl DuckStore {
 
         Ok(affected)
     }
+
+    /// Aggregate tool call statistics across all sessions.
+    pub fn get_tool_call_stats(&self) -> Result<Vec<(String, i64, i64, f64)>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT COALESCE(tool_name, '(unknown)') AS tn,
+                    COUNT(*) AS cnt,
+                    SUM(CASE WHEN success THEN 1 ELSE 0 END) AS ok,
+                    AVG(duration_ms) AS avg_dur
+             FROM tool_calls
+             GROUP BY tn
+             ORDER BY cnt DESC",
+        ).context("failed to prepare tool call stats")?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, f64>(3).unwrap_or(0.0),
+                ))
+            })
+            .context("failed to query tool call stats")?;
+
+        let mut stats = Vec::new();
+        for row in rows {
+            stats.push(row.context("failed to read tool call stats row")?);
+        }
+        Ok(stats)
+    }
+
+    /// Get daily session counts grouped by agent, for the last N days.
+    pub fn get_session_timeline(&self, days: i64, agent: Option<&str>) -> Result<Vec<(String, String, i64)>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+
+        let cutoff = Utc::now().naive_utc() - chrono::Duration::days(days);
+
+        if let Some(ag) = agent {
+            let mut stmt = conn.prepare(
+                "SELECT CAST(started_at AS DATE) AS day, agent, COUNT(*) AS cnt
+                 FROM sessions
+                 WHERE started_at >= ? AND agent = ?
+                 GROUP BY day, agent
+                 ORDER BY day",
+            ).context("failed to prepare session timeline")?;
+            let rows = stmt
+                .query_map(params![cutoff, ag], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })
+                .context("failed to query session timeline")?;
+            let mut result = Vec::new();
+            for row in rows {
+                result.push(row.context("failed to read timeline row")?);
+            }
+            Ok(result)
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT CAST(started_at AS DATE) AS day, agent, COUNT(*) AS cnt
+                 FROM sessions
+                 WHERE started_at >= ?
+                 GROUP BY day, agent
+                 ORDER BY day",
+            ).context("failed to prepare session timeline")?;
+            let rows = stmt
+                .query_map(params![cutoff], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })
+                .context("failed to query session timeline")?;
+            let mut result = Vec::new();
+            for row in rows {
+                result.push(row.context("failed to read timeline row")?);
+            }
+            Ok(result)
+        }
+    }
+
+    /// Get all facts (active + invalidated), optionally filtered by project.
+    pub fn get_all_facts(&self, project: Option<&str>, limit: usize) -> Result<Vec<Fact>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+
+        let (sql, use_project) = if project.is_some() {
+            (
+                "SELECT id, project_id, subject, predicate, object, confidence,
+                        source_session_id, source_agent, valid_at, invalid_at,
+                        superseded_by, created_at
+                 FROM facts
+                 WHERE project_id ILIKE ?
+                 ORDER BY created_at DESC NULLS LAST
+                 LIMIT ?",
+                true,
+            )
+        } else {
+            (
+                "SELECT id, project_id, subject, predicate, object, confidence,
+                        source_session_id, source_agent, valid_at, invalid_at,
+                        superseded_by, created_at
+                 FROM facts
+                 ORDER BY created_at DESC NULLS LAST
+                 LIMIT ?",
+                false,
+            )
+        };
+
+        let mut stmt = conn.prepare(sql).context("failed to prepare get_all_facts")?;
+
+        let map_row = |row: &duckdb::Row| -> duckdb::Result<Fact> {
+            Ok(Fact {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                subject: row.get(2)?,
+                predicate: row.get(3)?,
+                object: row.get(4)?,
+                confidence: row.get::<_, f32>(5).unwrap_or(1.0),
+                source_session_id: row.get(6)?,
+                source_agent: row.get(7)?,
+                valid_at: row.get(8)?,
+                invalid_at: row.get(9)?,
+                superseded_by: row.get(10)?,
+                created_at: row.get(11)?,
+            })
+        };
+
+        let rows = if use_project {
+            let pattern = format!("%{}%", project.unwrap());
+            stmt.query_map(params![pattern, limit as i64], map_row)
+                .context("failed to query all facts")?
+        } else {
+            stmt.query_map(params![limit as i64], map_row)
+                .context("failed to query all facts")?
+        };
+
+        let mut facts = Vec::new();
+        for row in rows {
+            facts.push(row.context("failed to read fact row")?);
+        }
+        Ok(facts)
+    }
+
+    /// Get per-agent aggregated stats: sessions, total tokens, average duration.
+    pub fn get_agent_stats(&self) -> Result<Vec<(String, i64, i64, f64)>> {
+        let conn = self.conn.lock().expect("lock poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT agent,
+                    COUNT(*) AS sessions,
+                    COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                    COALESCE(AVG(duration_minutes), 0) AS avg_duration
+             FROM sessions
+             GROUP BY agent
+             ORDER BY sessions DESC",
+        ).context("failed to prepare agent stats")?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, f64>(3).unwrap_or(0.0),
+                ))
+            })
+            .context("failed to query agent stats")?;
+
+        let mut stats = Vec::new();
+        for row in rows {
+            stats.push(row.context("failed to read agent stats row")?);
+        }
+        Ok(stats)
+    }
 }
 
 // ---------------------------------------------------------------------------

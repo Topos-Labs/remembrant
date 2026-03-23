@@ -84,6 +84,9 @@ pub struct AgentsConfig {
     pub codex: AgentEntry,
     #[serde(default)]
     pub gemini: AgentEntry,
+    /// Additional agents defined via config (Goose, OpenCode, Cursor, etc.).
+    #[serde(default)]
+    pub dynamic: Vec<crate::ingest::adapter::DynamicAgentConfig>,
 }
 
 impl Default for AgentsConfig {
@@ -92,6 +95,7 @@ impl Default for AgentsConfig {
             claude_code: AgentEntry::new(true, "~/.claude"),
             codex: AgentEntry::new(true, "~/.codex"),
             gemini: AgentEntry::new(true, "~/.gemini"),
+            dynamic: Vec::new(),
         }
     }
 }

@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::{
-    Router,
+    Json as AxumJson, Router,
     extract::{Path as AxumPath, Query, State},
     http::StatusCode,
     response::Html,
-    routing::get,
+    routing::{delete, get, post, put},
 };
 use chrono::NaiveDateTime;
 use clap::{Parser, Subcommand};
@@ -2465,6 +2465,365 @@ async fn web_search_memories(
     ))
 }
 
+// ---------------------------------------------------------------------------
+// New API endpoint handlers
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct FactsQuery {
+    project: Option<String>,
+    active_only: Option<bool>,
+    limit: Option<usize>,
+}
+
+async fn web_facts(
+    State(state): State<Arc<WebState>>,
+    Query(q): Query<FactsQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let limit = q.limit.unwrap_or(100);
+    let active_only = q.active_only.unwrap_or(true);
+    let facts = if active_only {
+        store
+            .get_active_facts(q.project.as_deref(), limit)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    } else {
+        store
+            .get_all_facts(q.project.as_deref(), limit)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    };
+    Ok(axum::Json(
+        serde_json::to_value(&facts).unwrap_or_default(),
+    ))
+}
+
+async fn web_fact_history(
+    State(state): State<Arc<WebState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let fact = store
+        .get_fact(&id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let history = store
+        .get_fact_history(&fact.subject)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(axum::Json(
+        serde_json::to_value(&history).unwrap_or_default(),
+    ))
+}
+
+async fn web_stats_agents(
+    State(state): State<Arc<WebState>>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let agent_stats = store
+        .get_agent_stats()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result: Vec<serde_json::Value> = agent_stats
+        .into_iter()
+        .map(|(agent, sessions, total_tokens, avg_duration)| {
+            serde_json::json!({
+                "agent": agent,
+                "sessions": sessions,
+                "total_tokens": total_tokens,
+                "avg_duration": avg_duration,
+            })
+        })
+        .collect();
+    Ok(axum::Json(serde_json::json!(result)))
+}
+
+async fn web_stats_tools(
+    State(state): State<Arc<WebState>>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let tool_stats = store
+        .get_tool_call_stats()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result: Vec<serde_json::Value> = tool_stats
+        .into_iter()
+        .map(|(tool_name, count, success_count, avg_duration_ms)| {
+            serde_json::json!({
+                "tool_name": tool_name,
+                "count": count,
+                "success_count": success_count,
+                "avg_duration_ms": avg_duration_ms,
+            })
+        })
+        .collect();
+    Ok(axum::Json(serde_json::json!(result)))
+}
+
+#[derive(serde::Deserialize)]
+struct TimelineQuery {
+    days: Option<i64>,
+    agent: Option<String>,
+}
+
+async fn web_stats_timeline(
+    State(state): State<Arc<WebState>>,
+    Query(q): Query<TimelineQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let days = q.days.unwrap_or(30);
+    let timeline = store
+        .get_session_timeline(days, q.agent.as_deref())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result: Vec<serde_json::Value> = timeline
+        .into_iter()
+        .map(|(date, agent, count)| {
+            serde_json::json!({
+                "date": date,
+                "agent": agent,
+                "count": count,
+            })
+        })
+        .collect();
+    Ok(axum::Json(serde_json::json!(result)))
+}
+
+#[derive(serde::Deserialize)]
+struct HotFilesQuery {
+    project: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn web_hotfiles(
+    State(state): State<Arc<WebState>>,
+    Query(q): Query<HotFilesQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let limit = q.limit.unwrap_or(20);
+    let files = store
+        .get_hot_files(q.project.as_deref(), limit)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result: Vec<serde_json::Value> = files
+        .into_iter()
+        .map(|(path, freq)| {
+            serde_json::json!({
+                "file_path": path,
+                "change_frequency": freq,
+            })
+        })
+        .collect();
+    Ok(axum::Json(serde_json::json!(result)))
+}
+
+async fn web_search_facts(
+    State(state): State<Arc<WebState>>,
+    Query(sq): Query<SearchQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let facts = store
+        .search_facts(&sq.q)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(axum::Json(
+        serde_json::to_value(&facts).unwrap_or_default(),
+    ))
+}
+
+#[derive(serde::Deserialize)]
+struct XPathQuery {
+    q: String,
+    limit: Option<usize>,
+}
+
+async fn web_search_xpath(
+    State(state): State<Arc<WebState>>,
+    Query(xq): Query<XPathQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let limit = xq.limit.unwrap_or(20);
+
+    let parsed = remembrant_engine::xpath_query::parse(&xq.q)
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    let builder = remembrant_engine::TreeBuilder::new(&store);
+    let root = builder
+        .build_tree(3)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let scorer = remembrant_engine::semantic_scorer::keyword_scorer;
+    let results = remembrant_engine::xpath_query::evaluate(&parsed, &root, &scorer);
+
+    let json_results: Vec<serde_json::Value> = results
+        .iter()
+        .take(limit)
+        .map(|r| {
+            serde_json::json!({
+                "node_id": r.node_id,
+                "node_type": r.node_type,
+                "name": r.name,
+                "weight": r.weight,
+                "path": r.path,
+            })
+        })
+        .collect();
+
+    Ok(axum::Json(serde_json::json!({
+        "query": xq.q,
+        "count": results.len(),
+        "results": json_results,
+    })))
+}
+
+#[derive(serde::Deserialize)]
+struct SymbolsQuery {
+    project: Option<String>,
+    file: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn web_symbols(
+    State(state): State<Arc<WebState>>,
+    Query(q): Query<SymbolsQuery>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let limit = q.limit.unwrap_or(100);
+    let symbols = if let (Some(file), Some(project)) = (&q.file, &q.project) {
+        store
+            .get_symbols_in_file(file, project)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    } else if let Some(project) = &q.project {
+        store
+            .get_symbols_for_project(project, limit)
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    } else {
+        // project is required for symbol queries
+        return Err(StatusCode::BAD_REQUEST);
+    };
+    Ok(axum::Json(
+        serde_json::to_value(&symbols).unwrap_or_default(),
+    ))
+}
+
+async fn web_graph_neighbors(
+    State(state): State<Arc<WebState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let neighbors = store
+        .query_graph_neighbors(&id, None)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(axum::Json(
+        serde_json::to_value(&neighbors).unwrap_or_default(),
+    ))
+}
+
+// --- Mutation endpoints ---
+
+#[derive(serde::Deserialize)]
+struct UpdateMemoryBody {
+    content: Option<String>,
+    confidence: Option<f32>,
+}
+
+async fn web_update_memory(
+    State(state): State<Arc<WebState>>,
+    AxumPath(id): AxumPath<String>,
+    AxumJson(body): AxumJson<UpdateMemoryBody>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let updated = store
+        .update_memory(&id, body.content.as_deref(), body.confidence)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if updated {
+        Ok(axum::Json(serde_json::json!({"ok": true})))
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
+async fn web_delete_memory(
+    State(state): State<Arc<WebState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let deleted = store
+        .delete_memory(&id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if deleted {
+        Ok(axum::Json(serde_json::json!({"ok": true})))
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
+async fn web_delete_fact(
+    State(state): State<Arc<WebState>>,
+    AxumPath(id): AxumPath<String>,
+) -> Result<axum::Json<serde_json::Value>, StatusCode> {
+    let store = state.store()?;
+    let deleted = store
+        .delete_fact(&id)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if deleted {
+        Ok(axum::Json(serde_json::json!({"ok": true})))
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct CreateNoteBody {
+    text: String,
+    project: Option<String>,
+}
+
+async fn web_create_note(
+    State(state): State<Arc<WebState>>,
+    AxumJson(body): AxumJson<CreateNoteBody>,
+) -> Result<(StatusCode, axum::Json<serde_json::Value>), StatusCode> {
+    let store = state.store()?;
+    let id = store
+        .insert_note(&body.text, body.project.as_deref())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((
+        StatusCode::CREATED,
+        axum::Json(serde_json::json!({"id": id})),
+    ))
+}
+
+#[derive(serde::Deserialize)]
+struct CreateDecisionBody {
+    what: String,
+    why: Option<String>,
+    alternatives: Option<Vec<String>>,
+    project: Option<String>,
+}
+
+async fn web_create_decision(
+    State(state): State<Arc<WebState>>,
+    AxumJson(body): AxumJson<CreateDecisionBody>,
+) -> Result<(StatusCode, axum::Json<serde_json::Value>), StatusCode> {
+    use remembrant_engine::store::Decision;
+
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().naive_utc();
+    let decision = Decision {
+        id: id.clone(),
+        session_id: None,
+        project_id: body.project,
+        decision_type: None,
+        what: body.what,
+        why: body.why,
+        alternatives: body.alternatives.unwrap_or_default(),
+        outcome: None,
+        created_at: Some(now),
+        valid_until: None,
+    };
+    let store = state.store()?;
+    store
+        .insert_decision(&decision)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok((
+        StatusCode::CREATED,
+        axum::Json(serde_json::json!({"id": id})),
+    ))
+}
+
 fn cmd_mcp() -> Result<()> {
     let config = AppConfig::load()?;
     let db_path = expand_tilde(&config.storage.duckdb_path);
@@ -2506,9 +2865,24 @@ async fn cmd_web(port: u16) -> Result<()> {
         .route("/api/sessions", get(web_sessions))
         .route("/api/sessions/{id}", get(web_session_detail))
         .route("/api/memories", get(web_memories))
-        .route("/api/decisions", get(web_decisions))
+        .route("/api/decisions", get(web_decisions).post(web_create_decision))
         .route("/api/search/sessions", get(web_search_sessions))
         .route("/api/search/memories", get(web_search_memories))
+        // New GET endpoints
+        .route("/api/facts", get(web_facts))
+        .route("/api/facts/{id}/history", get(web_fact_history))
+        .route("/api/stats/agents", get(web_stats_agents))
+        .route("/api/stats/tools", get(web_stats_tools))
+        .route("/api/stats/timeline", get(web_stats_timeline))
+        .route("/api/hotfiles", get(web_hotfiles))
+        .route("/api/search/facts", get(web_search_facts))
+        .route("/api/search/xpath", get(web_search_xpath))
+        .route("/api/symbols", get(web_symbols))
+        .route("/api/graph/neighbors/{id}", get(web_graph_neighbors))
+        // Mutation endpoints
+        .route("/api/memories/{id}", put(web_update_memory).delete(web_delete_memory))
+        .route("/api/facts/{id}", delete(web_delete_fact))
+        .route("/api/notes", post(web_create_note))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
