@@ -11,7 +11,7 @@ use chrono::NaiveDateTime;
 use tracing::{debug, warn};
 
 use super::adapter::{
-    expand_tilde, AgentAdapter, AgentMeta, DynamicAgentConfig, IngestOutput, SqliteMapping,
+    AgentAdapter, AgentMeta, DynamicAgentConfig, IngestOutput, SqliteMapping, expand_tilde,
 };
 use crate::store::duckdb::{Session, ToolCall};
 
@@ -62,10 +62,9 @@ impl GenericSqliteAdapter {
     /// Parse a timestamp string according to the configured format.
     fn parse_timestamp(&self, value: &rusqlite::types::Value) -> Option<NaiveDateTime> {
         match value {
-            rusqlite::types::Value::Text(s) => parse_timestamp_str(
-                s,
-                &self.mapping.session_columns.timestamp_format,
-            ),
+            rusqlite::types::Value::Text(s) => {
+                parse_timestamp_str(s, &self.mapping.session_columns.timestamp_format)
+            }
             rusqlite::types::Value::Integer(ts) => {
                 match self.mapping.session_columns.timestamp_format.as_str() {
                     "unix_millis" => {
@@ -155,13 +154,19 @@ impl GenericSqliteAdapter {
                 };
 
                 let summary: Option<String> = if cols.summary.is_some() {
-                    let _v = row.get(col_idx).ok();
-                    _v
+                    row.get(col_idx).ok()
                 } else {
                     None
                 };
 
-                Ok((id, project_id, started_at_val, ended_at_val, message_count, summary))
+                Ok((
+                    id,
+                    project_id,
+                    started_at_val,
+                    ended_at_val,
+                    message_count,
+                    summary,
+                ))
             })
             .context("querying sessions")?;
 
@@ -170,7 +175,9 @@ impl GenericSqliteAdapter {
             let (id, project_id, started_at_val, ended_at_val, message_count, summary) =
                 row_result.context("reading session row")?;
 
-            let started_at = started_at_val.as_ref().and_then(|v| self.parse_timestamp(v));
+            let started_at = started_at_val
+                .as_ref()
+                .and_then(|v| self.parse_timestamp(v));
             let ended_at = ended_at_val.as_ref().and_then(|v| self.parse_timestamp(v));
 
             let duration_minutes = match (started_at, ended_at) {
@@ -338,11 +345,7 @@ impl AgentAdapter for GenericSqliteAdapter {
 
         match self.read_tool_calls(&conn) {
             Ok(calls) => {
-                debug!(
-                    "[{}] read {} tool calls",
-                    self.meta.id,
-                    calls.len()
-                );
+                debug!("[{}] read {} tool calls", self.meta.id, calls.len());
                 output.tool_calls = calls;
             }
             Err(e) => {
@@ -363,18 +366,16 @@ impl AgentAdapter for GenericSqliteAdapter {
 /// Parse a timestamp string in a specified format.
 fn parse_timestamp_str(s: &str, format: &str) -> Option<NaiveDateTime> {
     match format {
-        "unix_seconds" => {
-            s.parse::<i64>()
-                .ok()
-                .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
-                .map(|dt| dt.naive_utc())
-        }
-        "unix_millis" => {
-            s.parse::<i64>()
-                .ok()
-                .and_then(chrono::DateTime::from_timestamp_millis)
-                .map(|dt| dt.naive_utc())
-        }
+        "unix_seconds" => s
+            .parse::<i64>()
+            .ok()
+            .and_then(|ts| chrono::DateTime::from_timestamp(ts, 0))
+            .map(|dt| dt.naive_utc()),
+        "unix_millis" => s
+            .parse::<i64>()
+            .ok()
+            .and_then(chrono::DateTime::from_timestamp_millis)
+            .map(|dt| dt.naive_utc()),
         _ => {
             // Default: ISO 8601
             chrono::DateTime::parse_from_rfc3339(s)
@@ -583,8 +584,9 @@ mod tests {
             );
             INSERT INTO tool_calls VALUES (
                 'tc-3', 'sess-2', 'shell', 'cargo test', 0, '2026-03-21T14:20:00Z'
-            );"
-        ).unwrap();
+            );",
+        )
+        .unwrap();
 
         db_path
     }
@@ -757,8 +759,14 @@ mod tests {
         let dt = parse_timestamp_str("2026-03-20T10:00:00Z", "iso8601");
         assert!(dt.is_some());
         let dt = dt.unwrap();
-        assert_eq!(dt.date(), chrono::NaiveDate::from_ymd_opt(2026, 3, 20).unwrap());
-        assert_eq!(dt.time(), chrono::NaiveTime::from_hms_opt(10, 0, 0).unwrap());
+        assert_eq!(
+            dt.date(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 20).unwrap()
+        );
+        assert_eq!(
+            dt.time(),
+            chrono::NaiveTime::from_hms_opt(10, 0, 0).unwrap()
+        );
     }
 
     #[test]

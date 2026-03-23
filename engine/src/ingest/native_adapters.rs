@@ -6,7 +6,7 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use super::adapter::{expand_tilde, AgentAdapter, AgentMeta, IngestOutput};
+use super::adapter::{AgentAdapter, AgentMeta, IngestOutput, expand_tilde};
 use super::claude::ClaudeIngester;
 use super::codex::CodexIngester;
 use super::gemini::GeminiIngester;
@@ -33,8 +33,10 @@ impl ClaudeAdapter {
             base_path: expand_tilde(path),
         }
     }
+}
 
-    pub fn default() -> Self {
+impl Default for ClaudeAdapter {
+    fn default() -> Self {
         Self::new("~/.claude")
     }
 }
@@ -82,8 +84,10 @@ impl CodexAdapter {
             base_path: expand_tilde(path),
         }
     }
+}
 
-    pub fn default() -> Self {
+impl Default for CodexAdapter {
+    fn default() -> Self {
         Self::new("~/.codex")
     }
 }
@@ -131,8 +135,10 @@ impl GeminiAdapter {
             base_path: expand_tilde(path),
         }
     }
+}
 
-    pub fn default() -> Self {
+impl Default for GeminiAdapter {
+    fn default() -> Self {
         Self::new("~/.gemini")
     }
 }

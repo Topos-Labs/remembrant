@@ -523,10 +523,7 @@ impl RepoEmbedder {
                                 symbols: vec![],
                                 symbols_extracted: false,
                                 language: detect_language(file).map(|s| s.to_string()),
-                                lines: chunks
-                                    .last()
-                                    .map(|c| c.end_line)
-                                    .unwrap_or(0),
+                                lines: chunks.last().map(|c| c.end_line).unwrap_or(0),
                             });
                         }
 

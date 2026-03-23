@@ -152,11 +152,7 @@ impl AdapterRegistry {
             let meta = adapter.meta();
             match adapter.ingest() {
                 Ok(result) => {
-                    tracing::info!(
-                        "[{}] ingested: {}",
-                        meta.display_name,
-                        result,
-                    );
+                    tracing::info!("[{}] ingested: {}", meta.display_name, result,);
                     output.merge(result);
                 }
                 Err(e) => {
@@ -183,7 +179,10 @@ impl AdapterRegistry {
 
     /// List detected agent IDs.
     pub fn detected_ids(&self) -> Vec<&str> {
-        self.detected().iter().map(|a| a.meta().id.as_str()).collect()
+        self.detected()
+            .iter()
+            .map(|a| a.meta().id.as_str())
+            .collect()
     }
 }
 
@@ -312,15 +311,15 @@ pub struct JsonlMapping {
 
 /// Expand a leading `~` in a path string to the user's home directory.
 pub fn expand_tilde(path: &str) -> PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest);
-        }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest);
     }
-    if path == "~" {
-        if let Some(home) = dirs::home_dir() {
-            return home;
-        }
+    if path == "~"
+        && let Some(home) = dirs::home_dir()
+    {
+        return home;
     }
     PathBuf::from(path)
 }
