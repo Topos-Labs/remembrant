@@ -2,7 +2,7 @@
 
 **Shared Persistent Memory for AI Coding Agents**
 
-Remembrant captures, indexes, and connects everything AI coding agents produce — sessions, decisions, tool calls, code entities — across Claude Code, Codex CLI, and Gemini CLI. It stores this in a triple-database architecture (DuckDB + LanceDB + property graph) and exposes it through a powerful CLI (`rem`), Semantic XPath queries, and a Tauri desktop app.
+Remembrant captures, indexes, and connects everything AI coding agents produce — sessions, decisions, tool calls, code entities — across Claude Code, Codex CLI, and Gemini CLI. It stores this in a triple-database architecture (DuckDB + LanceDB + property graph) and exposes it through a powerful CLI (`rem`), Semantic XPath queries, and a web dashboard.
 
 No agent works in isolation anymore. Every session builds on everything that came before.
 
@@ -17,7 +17,7 @@ No agent works in isolation anymore. Every session builds on everything that cam
 - **Security Scanning** — Secret detection and redaction before embedding (via Infiniloom)
 - **LLM Distillation** — Extract insights, patterns, and decisions from raw sessions
 - **File Watching** — Real-time monitoring of agent artifact directories
-- **Desktop App** — Tauri v2 native app for visual exploration
+- **Web Dashboard** — Built-in web UI for visual exploration
 - **Local-First** — All data stays local; uses LM Studio for embeddings
 
 ## Quick Start
@@ -242,15 +242,6 @@ endpoint = "http://localhost:1234/v1"
 dimensions = 768
 ```
 
-## Desktop App
-
-Remembrant includes a Tauri v2 native desktop app for visual exploration:
-
-```bash
-cd desktop
-cargo tauri dev
-```
-
 ## Project Structure
 
 ```
@@ -282,9 +273,6 @@ remembrant/
 │   └── tests/                 # Integration tests
 ├── cli/                       # CLI binary (rem)
 │   └── src/main.rs            # 22 subcommands
-├── desktop/                   # Tauri v2 desktop app
-│   ├── src/                   # Frontend
-│   └── src-tauri/             # Rust backend
 ├── .github/workflows/         # CI/CD
 ├── AGENTS.md                  # Guidelines for AI coding agents
 └── Cargo.toml                 # Workspace config (edition 2024)

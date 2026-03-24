@@ -1,5 +1,5 @@
 [workspace]
-members = ["engine", "cli", "desktop/src-tauri"]
+members = ["engine", "cli"]
 resolver = "2"
 
 [workspace.package]
@@ -62,6 +62,9 @@ regex = "1"
 
 # Directories
 dirs = "6"
+
+# SQLite (for generic agent adapters)
+rusqlite = { version = "0.34", features = ["bundled"] }
 
 # Web server
 axum = "0.8"

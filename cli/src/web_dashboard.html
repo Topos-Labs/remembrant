@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Remembrant</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
 
@@ -51,6 +52,7 @@
 
         .app { display: flex; height: 100vh; }
 
+        /* Sidebar */
         .sidebar {
             width: 220px;
             background: var(--bg-main);
@@ -80,6 +82,7 @@
             padding: 1px 6px; border-radius: 3px; font-size: 10px;
         }
         .nav-item.active .nav-badge { background: rgba(0,255,156,0.1); color: var(--accent); }
+        .nav-sep { height: 1px; background: var(--border); margin: 8px 16px; }
 
         .sidebar-footer { padding: 12px 16px; border-top: 1px solid var(--border); font-size: 10px; color: var(--text-dim); }
         .status-dot {
@@ -89,66 +92,97 @@
         }
         @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
+        /* Main */
         .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* Topbar */
         .topbar {
-            display: flex; align-items: center; gap: 12px;
-            padding: 12px 24px; background: var(--bg-main); border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; gap: 10px;
+            padding: 10px 24px; background: var(--bg-main); border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
         }
-        .search-wrapper { flex: 1; position: relative; }
+        .search-wrapper { flex: 1; position: relative; min-width: 200px; }
         .search-prefix { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--accent); font-size: 12px; pointer-events: none; }
         .search-input {
             width: 100%; background: var(--bg-surface); border: 1px solid var(--border);
-            color: var(--text-primary); padding: 9px 12px 9px 28px; border-radius: 6px;
+            color: var(--text-primary); padding: 8px 12px 8px 28px; border-radius: 6px;
             font-family: inherit; font-size: 12px; transition: border-color 0.2s;
         }
         .search-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-glow); }
         .search-input::placeholder { color: var(--text-dim); }
 
-        .filter-select {
-            background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-secondary);
-            padding: 9px 12px; border-radius: 6px; font-family: inherit; font-size: 12px; cursor: pointer;
+        .search-modes { display: flex; gap: 4px; }
+        .mode-btn {
+            background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-dim);
+            padding: 6px 10px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 10px;
+            text-transform: uppercase; letter-spacing: 0.5px; transition: all 0.15s;
         }
-        .filter-select:focus { outline: none; border-color: var(--accent); }
+        .mode-btn:hover { border-color: var(--text-dim); color: var(--text-secondary); }
+        .mode-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
+
+        .filter-chips { display: flex; gap: 4px; }
+        .chip {
+            padding: 5px 10px; border-radius: 4px; cursor: pointer; font-family: inherit;
+            font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+            border: 1px solid transparent; transition: all 0.15s; opacity: 0.5;
+        }
+        .chip.active { opacity: 1; }
+        .chip-claude { background: rgba(88,166,255,0.15); color: var(--blue); border-color: rgba(88,166,255,0.3); }
+        .chip-codex { background: rgba(0,255,156,0.1); color: var(--accent); border-color: rgba(0,255,156,0.2); }
+        .chip-gemini { background: rgba(188,140,255,0.15); color: var(--purple); border-color: rgba(188,140,255,0.3); }
+
+        .date-select, .filter-select {
+            background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-secondary);
+            padding: 7px 10px; border-radius: 6px; font-family: inherit; font-size: 11px; cursor: pointer;
+        }
+        .date-select:focus, .filter-select:focus { outline: none; border-color: var(--accent); }
 
         .btn {
-            background: var(--accent); color: var(--bg-deep); border: none; padding: 9px 16px;
+            background: var(--accent); color: var(--bg-deep); border: none; padding: 8px 14px;
             border-radius: 6px; cursor: pointer; font-family: inherit; font-weight: 600;
-            font-size: 12px; transition: all 0.15s;
+            font-size: 11px; transition: all 0.15s;
         }
         .btn:hover { box-shadow: 0 0 12px var(--accent-glow); filter: brightness(1.1); }
         .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-secondary); }
         .btn-ghost:hover { border-color: var(--text-dim); color: var(--text-primary); box-shadow: none; }
+        .btn-sm { padding: 4px 8px; font-size: 10px; }
+        .btn-danger { background: var(--red); }
+        .btn-danger:hover { box-shadow: 0 0 12px rgba(255,123,114,0.3); }
 
+        /* Content */
         .content { flex: 1; overflow-y: auto; padding: 20px 24px; }
         .content::-webkit-scrollbar { width: 6px; }
         .content::-webkit-scrollbar-track { background: transparent; }
         .content::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 3px; }
 
-        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+        /* Stats grid */
+        .stats-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 20px; }
         .stat-card {
             background: var(--bg-surface); border: 1px solid var(--border);
-            border-radius: 8px; padding: 16px; position: relative; overflow: hidden;
+            border-radius: 8px; padding: 14px; position: relative; overflow: hidden;
         }
         .stat-card::before {
             content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
             background: linear-gradient(90deg, var(--accent), transparent); opacity: 0.6;
         }
-        .stat-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px; }
-        .stat-value { font-size: 26px; font-weight: 700; color: var(--text-primary); }
+        .stat-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px; }
+        .stat-value { font-size: 22px; font-weight: 700; color: var(--text-primary); }
 
-        .panel { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-        .panel-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+        /* Panels */
+        .panel { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 16px; }
+        .panel-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); }
         .panel-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; }
         .panel-title .count { color: var(--text-dim); font-weight: 400; }
 
+        /* Tables */
         table { width: 100%; border-collapse: collapse; }
         th {
-            text-align: left; padding: 10px 16px; font-size: 10px; font-weight: 600;
+            text-align: left; padding: 8px 14px; font-size: 10px; font-weight: 600;
             color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;
             cursor: pointer; user-select: none; background: var(--bg-elevated); border-bottom: 1px solid var(--border);
         }
         th:hover { color: var(--accent); }
-        td { padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 12px; }
+        td { padding: 8px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
         tr:last-child td { border-bottom: none; }
         tbody tr { transition: background 0.1s; }
         tbody tr:hover { background: var(--bg-hover); cursor: pointer; }
@@ -158,21 +192,37 @@
         .agent-codex { background: rgba(0,255,156,0.1); color: var(--accent); border: 1px solid rgba(0,255,156,0.15); }
         .agent-gemini { background: rgba(188,140,255,0.15); color: var(--purple); border: 1px solid rgba(188,140,255,0.2); }
 
-        .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
+        .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 400px; }
         .dim { color: var(--text-dim); }
         .mono { font-variant-numeric: tabular-nums; }
 
+        /* Confidence bar */
+        .conf-bar { display: inline-flex; align-items: center; gap: 6px; }
+        .conf-track { width: 40px; height: 4px; background: var(--bg-hover); border-radius: 2px; overflow: hidden; }
+        .conf-fill { height: 100%; border-radius: 2px; }
+        .conf-high { background: var(--accent); }
+        .conf-mid { background: var(--yellow); }
+        .conf-low { background: var(--red); }
+
+        /* Cards */
         .card-list { padding: 8px; }
         .memory-card {
             background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px;
             padding: 12px 14px; margin-bottom: 8px; border-left: 2px solid var(--accent); transition: border-color 0.15s;
         }
         .memory-card:hover { border-left-color: var(--cyan); }
-        .card-meta { display: flex; justify-content: space-between; margin-bottom: 6px; }
+        .card-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
         .card-type { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); }
         .card-date { font-size: 10px; color: var(--text-dim); }
         .card-body { font-size: 12px; color: var(--text-secondary); line-height: 1.6; }
         .card-footer { font-size: 10px; color: var(--text-dim); margin-top: 6px; }
+        .card-actions { display: flex; gap: 6px; }
+        .card-actions button {
+            background: none; border: 1px solid var(--border); color: var(--text-dim); border-radius: 3px;
+            padding: 2px 6px; cursor: pointer; font-family: inherit; font-size: 10px; transition: all 0.15s;
+        }
+        .card-actions button:hover { border-color: var(--text-secondary); color: var(--text-primary); }
+        .card-actions button.del:hover { border-color: var(--red); color: var(--red); }
 
         .decision-card {
             background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px;
@@ -181,40 +231,97 @@
         .decision-card:hover { border-left-color: var(--orange); }
         .decision-card .card-type { color: var(--purple); }
 
+        /* Fact styling */
+        .fact-superseded { opacity: 0.5; text-decoration: line-through; }
+        .fact-active .status-badge { background: rgba(0,255,156,0.1); color: var(--accent); }
+        .fact-inactive .status-badge { background: rgba(139,148,158,0.1); color: var(--text-dim); }
+        .status-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 9px; font-weight: 600; text-transform: uppercase; }
+
+        /* Timeline */
+        .timeline { padding: 8px 16px; }
+        .timeline-item { display: flex; gap: 12px; padding: 8px 0; border-left: 2px solid var(--border); margin-left: 8px; padding-left: 16px; position: relative; }
+        .timeline-item::before { content: ''; position: absolute; left: -5px; top: 12px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); border: 2px solid var(--bg-surface); }
+        .timeline-item.superseded::before { background: var(--text-dim); }
+        .timeline-meta { flex-shrink: 0; width: 120px; font-size: 10px; color: var(--text-dim); }
+        .timeline-content { flex: 1; font-size: 12px; }
+        .timeline-diff-add { color: var(--accent); }
+        .timeline-diff-del { color: var(--red); text-decoration: line-through; }
+
+        /* Charts */
+        .chart-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+        .chart-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+        .chart-card h3 { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+        .chart-container { position: relative; height: 220px; }
+        .chart-card.full { grid-column: 1 / -1; }
+
+        /* Analytics metric cards */
+        .metric-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+        .metric-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; }
+        .metric-agent { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+        .metric-val { font-size: 20px; font-weight: 700; }
+        .metric-label { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+
+        /* Modal */
         .modal-overlay {
             display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.85); z-index: 1000; padding: 40px; overflow-y: auto;
         }
         .modal { background: var(--bg-surface); border: 1px solid var(--border); max-width: 900px; margin: 0 auto; border-radius: 8px; overflow: hidden; }
-        .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; background: var(--bg-elevated); border-bottom: 1px solid var(--border); }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; background: var(--bg-elevated); border-bottom: 1px solid var(--border); }
         .modal-header h2 { font-size: 14px; font-weight: 600; color: var(--text-primary); }
         .modal-close { background: none; border: none; color: var(--text-dim); font-size: 20px; cursor: pointer; padding: 0 4px; }
         .modal-close:hover { color: var(--red); }
         .modal-body { padding: 20px; }
-        .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 20px; }
+        .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 16px; }
         .detail-item label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; }
         .detail-item .val { font-size: 13px; color: var(--text-primary); margin-top: 2px; }
 
         .tool-call-item {
             background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 4px;
-            padding: 10px 12px; margin-bottom: 6px; border-left: 2px solid var(--cyan); font-size: 12px;
+            padding: 8px 12px; margin-bottom: 4px; border-left: 2px solid var(--cyan); font-size: 12px;
         }
         .tool-call-item.failed { border-left-color: var(--red); }
         .tool-call-item .tc-header { display: flex; justify-content: space-between; color: var(--text-primary); font-weight: 500; }
-        .tool-call-item .tc-cmd { color: var(--text-dim); margin-top: 4px; font-size: 11px; word-break: break-all; }
-        .tool-call-item .tc-err { color: var(--red); margin-top: 4px; font-size: 11px; }
+        .tool-call-item .tc-cmd { color: var(--text-dim); margin-top: 3px; font-size: 11px; word-break: break-all; }
+        .tool-call-item .tc-err { color: var(--red); margin-top: 3px; font-size: 11px; }
 
         .files-list { list-style: none; padding: 0; }
-        .files-list li { padding: 4px 0; font-size: 12px; color: var(--cyan); }
+        .files-list li { padding: 3px 0; font-size: 12px; color: var(--cyan); }
         .files-list li::before { content: '\2192 '; color: var(--text-dim); }
 
-        .search-result {
-            background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px;
-            padding: 12px 14px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s;
+        /* Command palette */
+        .cmd-overlay {
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7); z-index: 2000; padding: 20vh 0 0;
         }
-        .search-result:hover { border-color: var(--accent); }
-        .sr-header { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
-        .sr-body { color: var(--text-secondary); font-size: 12px; }
+        .cmd-dialog {
+            max-width: 560px; margin: 0 auto; background: var(--bg-surface); border: 1px solid var(--border);
+            border-radius: 10px; overflow: hidden; box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+        }
+        .cmd-input {
+            width: 100%; background: transparent; border: none; border-bottom: 1px solid var(--border);
+            color: var(--text-primary); padding: 16px 20px; font-family: inherit; font-size: 14px;
+        }
+        .cmd-input:focus { outline: none; }
+        .cmd-input::placeholder { color: var(--text-dim); }
+        .cmd-results { max-height: 300px; overflow-y: auto; }
+        .cmd-item {
+            padding: 10px 20px; cursor: pointer; display: flex; align-items: center; gap: 10px;
+            font-size: 13px; color: var(--text-secondary); transition: background 0.1s;
+        }
+        .cmd-item:hover, .cmd-item.selected { background: var(--accent-glow); color: var(--accent); }
+        .cmd-item .cmd-icon { width: 20px; text-align: center; font-size: 14px; }
+        .cmd-hint { margin-left: auto; font-size: 10px; color: var(--text-dim); }
+
+        /* Inline edit form */
+        .edit-form { background: var(--bg-deep); border: 1px solid var(--border); border-radius: 6px; padding: 12px; margin-top: 8px; }
+        .edit-form textarea {
+            width: 100%; background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-primary);
+            padding: 8px; border-radius: 4px; font-family: inherit; font-size: 12px; resize: vertical; min-height: 60px;
+        }
+        .edit-form textarea:focus { outline: none; border-color: var(--accent); }
+        .edit-form .edit-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+        .edit-form input[type=range] { flex: 1; accent-color: var(--accent); }
 
         .empty-state { text-align: center; padding: 60px 20px; color: var(--text-dim); }
         .empty-state .empty-icon { font-size: 32px; margin-bottom: 12px; }
@@ -234,6 +341,10 @@
             font-size: 10px; color: var(--text-dim);
         }
         .statusbar .sep { width: 1px; height: 10px; background: var(--border); }
+
+        .section-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1.5px; padding: 12px 14px 6px; }
+
+        .kbd { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 3px; padding: 1px 5px; font-size: 10px; color: var(--text-dim); }
     </style>
 </head>
 <body>
@@ -252,9 +363,17 @@
                     <span class="nav-icon">&#x25C8;</span> Memories
                     <span class="nav-badge" id="navMemories">-</span>
                 </div>
+                <div class="nav-item" data-tab="facts" onclick="switchTab('facts')">
+                    <span class="nav-icon">&#x25C6;</span> Facts
+                    <span class="nav-badge" id="navFacts">-</span>
+                </div>
                 <div class="nav-item" data-tab="decisions" onclick="switchTab('decisions')">
                     <span class="nav-icon">&#x2298;</span> Decisions
                     <span class="nav-badge" id="navDecisions">-</span>
+                </div>
+                <div class="nav-sep"></div>
+                <div class="nav-item" data-tab="analytics" onclick="switchTab('analytics')">
+                    <span class="nav-icon">&#x25CE;</span> Analytics
                 </div>
                 <div class="nav-item" data-tab="search" onclick="switchTab('search')" id="navSearchItem" style="display:none">
                     <span class="nav-icon">&#x2295;</span> Search
@@ -262,6 +381,9 @@
             </div>
             <div class="sidebar-footer">
                 <span class="status-dot"></span> system active
+                <div style="margin-top:6px;font-size:9px;color:var(--text-dim)">
+                    <span class="kbd">&#x2318;K</span> command palette &middot; <span class="kbd">/</span> search
+                </div>
             </div>
         </div>
 
@@ -269,7 +391,17 @@
             <div class="topbar">
                 <div class="search-wrapper">
                     <span class="search-prefix">&#x203A;</span>
-                    <input class="search-input" id="searchInput" type="text" placeholder="search sessions, memories, decisions..." />
+                    <input class="search-input" id="searchInput" type="text" placeholder="search sessions, memories, facts..." />
+                </div>
+                <div class="search-modes">
+                    <button class="mode-btn active" data-mode="text" onclick="setSearchMode('text')">Text</button>
+                    <button class="mode-btn" data-mode="facts" onclick="setSearchMode('facts')">Facts</button>
+                    <button class="mode-btn" data-mode="xpath" onclick="setSearchMode('xpath')">XPath</button>
+                </div>
+                <div class="filter-chips">
+                    <span class="chip chip-claude active" onclick="toggleAgent(this,'claude')">Claude</span>
+                    <span class="chip chip-codex active" onclick="toggleAgent(this,'codex')">Codex</span>
+                    <span class="chip chip-gemini active" onclick="toggleAgent(this,'gemini')">Gemini</span>
                 </div>
                 <select class="filter-select" id="projectFilter">
                     <option value="">all projects</option>
@@ -281,10 +413,13 @@
                 <div class="stats-grid">
                     <div class="stat-card"><div class="stat-label">sessions</div><div class="stat-value" id="statSessions">-</div></div>
                     <div class="stat-card"><div class="stat-label">memories</div><div class="stat-value" id="statMemories">-</div></div>
+                    <div class="stat-card"><div class="stat-label">facts</div><div class="stat-value" id="statFacts">-</div></div>
                     <div class="stat-card"><div class="stat-label">decisions</div><div class="stat-value" id="statDecisions">-</div></div>
+                    <div class="stat-card"><div class="stat-label">tool calls</div><div class="stat-value" id="statToolCalls">-</div></div>
                     <div class="stat-card"><div class="stat-label">projects</div><div class="stat-value" id="statProjects">-</div></div>
                 </div>
 
+                <!-- Sessions -->
                 <div class="tab-content active" id="sessionsPanel">
                     <div class="panel">
                         <div class="panel-header"><div class="panel-title">sessions <span class="count" id="sessionsCount"></span></div></div>
@@ -292,25 +427,78 @@
                     </div>
                 </div>
 
+                <!-- Memories -->
                 <div class="tab-content" id="memoriesPanel">
                     <div class="panel">
-                        <div class="panel-header"><div class="panel-title">memories</div></div>
+                        <div class="panel-header">
+                            <div class="panel-title">memories</div>
+                            <button class="btn btn-sm btn-ghost" onclick="showAddNote()">+ add note</button>
+                        </div>
                         <div id="memoriesContent" class="card-list"><div class="loading-state">loading</div></div>
                     </div>
                 </div>
 
+                <!-- Facts -->
+                <div class="tab-content" id="factsPanel">
+                    <div class="panel">
+                        <div class="panel-header">
+                            <div class="panel-title">knowledge base <span class="count" id="factsCount"></span></div>
+                            <div style="display:flex;gap:6px">
+                                <button class="btn btn-sm btn-ghost" id="factsToggle" onclick="toggleFactsFilter()">active only</button>
+                            </div>
+                        </div>
+                        <div id="factsContent"><div class="loading-state">loading</div></div>
+                    </div>
+                </div>
+
+                <!-- Decisions -->
                 <div class="tab-content" id="decisionsPanel">
                     <div class="panel">
-                        <div class="panel-header"><div class="panel-title">decision journal</div></div>
+                        <div class="panel-header">
+                            <div class="panel-title">decision journal</div>
+                            <button class="btn btn-sm btn-ghost" onclick="showAddDecision()">+ record</button>
+                        </div>
                         <div id="decisionsContent" class="card-list"><div class="loading-state">loading</div></div>
                     </div>
                 </div>
 
+                <!-- Analytics -->
+                <div class="tab-content" id="analyticsPanel">
+                    <div class="metric-row" id="agentMetrics"></div>
+                    <div class="chart-grid">
+                        <div class="chart-card full">
+                            <h3>Session Activity (30 days)</h3>
+                            <div class="chart-container"><canvas id="timelineChart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <h3>Sessions by Agent</h3>
+                            <div class="chart-container"><canvas id="agentChart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <h3>Tool Call Distribution</h3>
+                            <div class="chart-container"><canvas id="toolChart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <h3>Token Usage by Agent</h3>
+                            <div class="chart-container"><canvas id="tokenChart"></canvas></div>
+                        </div>
+                        <div class="chart-card">
+                            <h3>File Hotspots (Top 15)</h3>
+                            <div class="chart-container"><canvas id="hotfileChart"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-header"><div class="panel-title">tool call details</div></div>
+                        <div id="toolStatsContent"><div class="loading-state">loading</div></div>
+                    </div>
+                </div>
+
+                <!-- Search -->
                 <div class="tab-content" id="searchPanel">
                     <div class="panel">
                         <div class="panel-header">
                             <div class="panel-title">search results</div>
-                            <button class="btn-ghost btn" onclick="clearSearch()">clear</button>
+                            <button class="btn-ghost btn btn-sm" onclick="clearSearch()">clear</button>
                         </div>
                         <div id="searchContent" class="card-list"></div>
                     </div>
@@ -324,56 +512,172 @@
                 <span class="sep"></span>
                 <span id="sbAgents">-</span>
                 <span class="sep"></span>
+                <span id="sbHealth">-</span>
+                <span class="sep"></span>
+                <span id="sbRefresh">-</span>
+                <span class="sep"></span>
                 <span>v0.1.0</span>
             </div>
         </div>
     </div>
 
+    <!-- Session Detail Modal -->
     <div class="modal-overlay" id="detailModal">
         <div class="modal">
             <div class="modal-header">
                 <h2 id="modalTitle">Session Detail</h2>
-                <button class="modal-close" onclick="closeDetail()">&#xD7;</button>
+                <button class="modal-close" onclick="closeModal('detailModal')">&times;</button>
             </div>
             <div class="modal-body" id="detailContent"></div>
         </div>
     </div>
 
-    <script>
-        async function api(path) {
-            const res = await fetch('/api/' + path);
-            if (!res.ok) throw new Error('API error: ' + res.status);
-            return res.json();
-        }
+    <!-- Fact History Modal -->
+    <div class="modal-overlay" id="factModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="factModalTitle">Fact History</h2>
+                <button class="modal-close" onclick="closeModal('factModal')">&times;</button>
+            </div>
+            <div class="modal-body" id="factModalContent"></div>
+        </div>
+    </div>
 
+    <!-- Add Note Modal -->
+    <div class="modal-overlay" id="noteModal">
+        <div class="modal" style="max-width:500px">
+            <div class="modal-header">
+                <h2>Add Note</h2>
+                <button class="modal-close" onclick="closeModal('noteModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <textarea id="noteText" style="width:100%;background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-primary);padding:10px;border-radius:6px;font-family:inherit;font-size:12px;min-height:80px;resize:vertical" placeholder="Write a note..."></textarea>
+                <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
+                    <button class="btn btn-ghost btn-sm" onclick="closeModal('noteModal')">cancel</button>
+                    <button class="btn btn-sm" onclick="submitNote()">save note</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Decision Modal -->
+    <div class="modal-overlay" id="decisionModal">
+        <div class="modal" style="max-width:500px">
+            <div class="modal-header">
+                <h2>Record Decision</h2>
+                <button class="modal-close" onclick="closeModal('decisionModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="margin-bottom:10px">
+                    <label style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">What</label>
+                    <input id="decWhat" style="width:100%;background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-primary);padding:8px;border-radius:4px;font-family:inherit;font-size:12px;margin-top:4px" placeholder="The decision..." />
+                </div>
+                <div style="margin-bottom:10px">
+                    <label style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">Why</label>
+                    <textarea id="decWhy" style="width:100%;background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-primary);padding:8px;border-radius:4px;font-family:inherit;font-size:12px;min-height:60px;resize:vertical;margin-top:4px" placeholder="Reasoning..."></textarea>
+                </div>
+                <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
+                    <button class="btn btn-ghost btn-sm" onclick="closeModal('decisionModal')">cancel</button>
+                    <button class="btn btn-sm" onclick="submitDecision()">save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Command Palette -->
+    <div class="cmd-overlay" id="cmdPalette">
+        <div class="cmd-dialog">
+            <input class="cmd-input" id="cmdInput" placeholder="Type a command or search..." />
+            <div class="cmd-results" id="cmdResults">
+                <div class="cmd-item" onclick="cmdGo('sessions')"><span class="cmd-icon">&#x229E;</span> Sessions <span class="cmd-hint">view all sessions</span></div>
+                <div class="cmd-item" onclick="cmdGo('memories')"><span class="cmd-icon">&#x25C8;</span> Memories <span class="cmd-hint">browse memories</span></div>
+                <div class="cmd-item" onclick="cmdGo('facts')"><span class="cmd-icon">&#x25C6;</span> Facts <span class="cmd-hint">knowledge base</span></div>
+                <div class="cmd-item" onclick="cmdGo('decisions')"><span class="cmd-icon">&#x2298;</span> Decisions <span class="cmd-hint">decision journal</span></div>
+                <div class="cmd-item" onclick="cmdGo('analytics')"><span class="cmd-icon">&#x25CE;</span> Analytics <span class="cmd-hint">charts & stats</span></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // -----------------------------------------------------------------------
+        // State
+        // -----------------------------------------------------------------------
         let allSessions = [];
         let currentProject = '';
         let sortField = 'started_at';
         let sortAsc = false;
+        let searchMode = 'text';
+        let activeAgents = new Set(['claude', 'codex', 'gemini']);
+        let factsActiveOnly = true;
+        let charts = {};
+        let refreshTimer = null;
 
+        // -----------------------------------------------------------------------
+        // API helpers
+        // -----------------------------------------------------------------------
+        async function api(path, opts) {
+            const res = await fetch('/api/' + path, opts);
+            if (!res.ok) throw new Error('API ' + res.status);
+            return res.json();
+        }
+        async function apiPut(path, body) { return api(path, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
+        async function apiPost(path, body) { return api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
+        async function apiDel(path) { return api(path, { method: 'DELETE' }); }
+        function esc(s) { return s ? s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : ''; }
+        function fmtDate(s) { try { return new Date(s).toLocaleDateString('en-US',{month:'short',day:'numeric'}); } catch { return s||''; } }
+        function fmtDateTime(s) { try { return new Date(s).toLocaleString(); } catch { return s||''; } }
+        function fmtNum(n) { if(n>=1e6) return (n/1e6).toFixed(1)+'M'; if(n>=1000) return (n/1000).toFixed(1)+'k'; return String(n); }
+        function confClass(c) { return c >= 0.8 ? 'conf-high' : c >= 0.5 ? 'conf-mid' : 'conf-low'; }
+        function confBar(c) {
+            const pct = Math.round(c * 100);
+            return '<span class="conf-bar"><span class="conf-track"><span class="conf-fill ' + confClass(c) + '" style="width:' + pct + '%"></span></span><span class="dim" style="font-size:10px">' + pct + '%</span></span>';
+        }
+        function agentTag(a) { return '<span class="agent-tag agent-' + (a||'').toLowerCase() + '">' + esc(a||'unknown') + '</span>'; }
+
+        // -----------------------------------------------------------------------
+        // Tab navigation
+        // -----------------------------------------------------------------------
         function switchTab(tab) {
             document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(p => p.classList.remove('active'));
-            document.querySelector('.nav-item[data-tab="' + tab + '"]').classList.add('active');
+            const navEl = document.querySelector('.nav-item[data-tab="' + tab + '"]');
+            if (navEl) navEl.classList.add('active');
             document.getElementById(tab + 'Panel').classList.add('active');
             if (tab === 'memories') loadMemories();
             if (tab === 'decisions') loadDecisions();
+            if (tab === 'facts') loadFacts();
+            if (tab === 'analytics') loadAnalytics();
         }
 
+        // -----------------------------------------------------------------------
+        // Stats
+        // -----------------------------------------------------------------------
         async function loadStats() {
             try {
                 const d = await api('stats');
-                document.getElementById('statSessions').textContent = d.sessions || 0;
-                document.getElementById('statMemories').textContent = d.memories || 0;
-                document.getElementById('statDecisions').textContent = d.decisions || 0;
+                document.getElementById('statSessions').textContent = fmtNum(d.sessions || 0);
+                document.getElementById('statMemories').textContent = fmtNum(d.memories || 0);
+                document.getElementById('statDecisions').textContent = fmtNum(d.decisions || 0);
+                document.getElementById('statToolCalls').textContent = fmtNum(d.tool_calls || 0);
                 document.getElementById('statProjects').textContent = d.projects || 0;
-                document.getElementById('navSessions').textContent = d.sessions || 0;
-                document.getElementById('navMemories').textContent = d.memories || 0;
-                document.getElementById('navDecisions').textContent = d.decisions || 0;
+                document.getElementById('navSessions').textContent = fmtNum(d.sessions || 0);
+                document.getElementById('navMemories').textContent = fmtNum(d.memories || 0);
+                document.getElementById('navDecisions').textContent = fmtNum(d.decisions || 0);
                 document.getElementById('sbProjects').textContent = (d.projects || 0) + ' projects';
+                // Load facts count
+                try {
+                    const facts = await api('facts?active_only=true&limit=1');
+                    const factCount = Array.isArray(facts) ? facts.length : 0;
+                    // Better: get from stats if available
+                    api('facts?active_only=true&limit=10000').then(f => {
+                        const c = Array.isArray(f) ? f.length : 0;
+                        document.getElementById('statFacts').textContent = fmtNum(c);
+                        document.getElementById('navFacts').textContent = fmtNum(c);
+                    }).catch(() => {});
+                } catch { document.getElementById('statFacts').textContent = '-'; }
+                document.getElementById('sbRefresh').textContent = 'updated ' + new Date().toLocaleTimeString();
             } catch (e) {
                 document.getElementById('statSessions').textContent = 'ERR';
-                document.getElementById('statSessions').title = String(e);
             }
         }
 
@@ -381,14 +685,14 @@
             try {
                 const projects = await api('projects');
                 const sel = document.getElementById('projectFilter');
-                projects.forEach(p => {
-                    const o = document.createElement('option');
-                    o.value = p; o.textContent = p;
-                    sel.appendChild(o);
-                });
+                projects.forEach(p => { const o = document.createElement('option'); o.value = p; o.textContent = p; sel.appendChild(o); });
+                document.getElementById('sbAgents').textContent = projects.length + ' projects tracked';
             } catch (e) { console.error('Projects:', e); }
         }
 
+        // -----------------------------------------------------------------------
+        // Sessions
+        // -----------------------------------------------------------------------
         async function loadSessions(project) {
             try {
                 let url = 'sessions?limit=200';
@@ -398,15 +702,15 @@
                 document.getElementById('sessionsCount').textContent = '(' + sessions.length + ')';
                 renderSessions(sessions);
             } catch (e) {
-                document.getElementById('sessionsContent').innerHTML =
-                    '<div class="empty-state"><div class="empty-icon">&#x2297;</div><div class="empty-text">Error: ' + esc(String(e)) + '</div></div>';
+                document.getElementById('sessionsContent').innerHTML = '<div class="empty-state"><div class="empty-icon">&#x2297;</div><div class="empty-text">Error: ' + esc(String(e)) + '</div></div>';
             }
         }
 
         function renderSessions(sessions) {
+            const filtered = sessions.filter(s => activeAgents.has((s.agent||'').toLowerCase()));
             const el = document.getElementById('sessionsContent');
-            if (!sessions.length) {
-                el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x229E;</div><div class="empty-text">no sessions yet. run <code>rem init</code> to begin.</div></div>';
+            if (!filtered.length) {
+                el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x229E;</div><div class="empty-text">no sessions found. run <code>rem init</code> to begin.</div></div>';
                 return;
             }
             el.innerHTML = '<table><thead><tr>' +
@@ -416,14 +720,12 @@
                 '<th>msgs</th><th>tools</th><th>tokens</th>' +
                 '<th onclick="sortBy(\'summary\')">summary</th>' +
                 '</tr></thead><tbody>' +
-                sessions.map(s => {
-                    const a = s.agent || 'unknown';
-                    const cls = 'agent-' + a.toLowerCase();
+                filtered.map(s => {
                     const dt = s.started_at ? fmtDate(s.started_at) : '-';
                     const sum = s.summary || '\u2014';
-                    return '<tr onclick="showDetail(\'' + s.id + '\')">' +
-                        '<td><span class="agent-tag ' + cls + '">' + a + '</span></td>' +
-                        '<td class="dim">' + (s.project_id || '-') + '</td>' +
+                    return '<tr onclick="showDetail(\'' + esc(s.id) + '\')">' +
+                        '<td>' + agentTag(s.agent) + '</td>' +
+                        '<td class="dim" style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(s.project_id || '-') + '</td>' +
                         '<td class="mono dim">' + dt + '</td>' +
                         '<td class="mono">' + (s.message_count || '-') + '</td>' +
                         '<td class="mono">' + (s.tool_call_count || '-') + '</td>' +
@@ -435,10 +737,7 @@
         function sortBy(field) {
             if (sortField === field) sortAsc = !sortAsc;
             else { sortField = field; sortAsc = true; }
-            allSessions.sort((a, b) => {
-                const av = a[field] || '', bv = b[field] || '';
-                return sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
-            });
+            allSessions.sort((a, b) => { const av = a[field]||'', bv = b[field]||''; return sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1); });
             renderSessions(allSessions);
         }
 
@@ -447,82 +746,166 @@
                 const data = await api('sessions/' + encodeURIComponent(id));
                 const s = data.session;
                 const tcs = data.tool_calls || [];
-
                 let html = '<div class="detail-grid">' +
-                    '<div class="detail-item"><label>id</label><div class="val dim" style="font-size:11px;word-break:break-all">' + s.id + '</div></div>' +
-                    '<div class="detail-item"><label>agent</label><div class="val"><span class="agent-tag agent-' + (s.agent||'').toLowerCase() + '">' + s.agent + '</span></div></div>' +
-                    '<div class="detail-item"><label>project</label><div class="val">' + (s.project_id || '-') + '</div></div>' +
+                    '<div class="detail-item"><label>id</label><div class="val dim" style="font-size:11px;word-break:break-all">' + esc(s.id) + '</div></div>' +
+                    '<div class="detail-item"><label>agent</label><div class="val">' + agentTag(s.agent) + '</div></div>' +
+                    '<div class="detail-item"><label>project</label><div class="val">' + esc(s.project_id || '-') + '</div></div>' +
                     '<div class="detail-item"><label>duration</label><div class="val">' + (s.duration_minutes || '-') + ' min</div></div>' +
-                    '<div class="detail-item"><label>started</label><div class="val mono">' + (s.started_at ? new Date(s.started_at).toLocaleString() : '-') + '</div></div>' +
-                    '<div class="detail-item"><label>ended</label><div class="val mono">' + (s.ended_at ? new Date(s.ended_at).toLocaleString() : '-') + '</div></div>' +
+                    '<div class="detail-item"><label>started</label><div class="val mono">' + fmtDateTime(s.started_at) + '</div></div>' +
+                    '<div class="detail-item"><label>ended</label><div class="val mono">' + fmtDateTime(s.ended_at) + '</div></div>' +
                     '<div class="detail-item"><label>messages</label><div class="val mono">' + (s.message_count || '-') + '</div></div>' +
-                    '<div class="detail-item"><label>tokens</label><div class="val mono">' + (s.total_tokens ? fmtNum(s.total_tokens) : '-') + '</div></div>' +
-                    '</div>';
-
-                if (s.summary) {
-                    html += '<div style="margin-bottom:16px"><label style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">summary</label><div style="margin-top:4px;color:var(--text-secondary);font-size:12px;line-height:1.6">' + esc(s.summary) + '</div></div>';
-                }
-
-                if (s.files_changed && s.files_changed.length) {
-                    html += '<div style="margin-bottom:16px"><label style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">files changed (' + s.files_changed.length + ')</label><ul class="files-list">' + s.files_changed.map(f => '<li>' + esc(f) + '</li>').join('') + '</ul></div>';
-                }
-
+                    '<div class="detail-item"><label>tokens</label><div class="val mono">' + (s.total_tokens ? fmtNum(s.total_tokens) : '-') + '</div></div></div>';
+                if (s.summary) html += '<div style="margin-bottom:14px"><label style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">summary</label><div style="margin-top:4px;color:var(--text-secondary);font-size:12px;line-height:1.6">' + esc(s.summary) + '</div></div>';
+                if (s.files_changed && s.files_changed.length) html += '<div style="margin-bottom:14px"><label style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">files changed (' + s.files_changed.length + ')</label><ul class="files-list">' + s.files_changed.map(f => '<li>' + esc(f) + '</li>').join('') + '</ul></div>';
                 if (tcs.length) {
                     html += '<div><label style="font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">tool calls (' + tcs.length + ')</label>';
-                    tcs.forEach(tc => {
+                    tcs.slice(0, 50).forEach(tc => {
                         const cls = tc.success === false ? ' failed' : '';
                         const ts = tc.timestamp ? new Date(tc.timestamp).toLocaleTimeString() : '';
-                        html += '<div class="tool-call-item' + cls + '">' +
-                            '<div class="tc-header"><span>' + esc(tc.tool_name || 'unknown') + '</span><span class="dim">' + ts + '</span></div>' +
+                        html += '<div class="tool-call-item' + cls + '"><div class="tc-header"><span>' + esc(tc.tool_name || 'unknown') + '</span><span class="dim">' + ts + '</span></div>' +
                             (tc.command ? '<div class="tc-cmd">' + esc(tc.command.substring(0, 150)) + (tc.command.length > 150 ? '\u2026' : '') + '</div>' : '') +
-                            (tc.error_message ? '<div class="tc-err">' + esc(tc.error_message) + '</div>' : '') +
-                            '</div>';
+                            (tc.error_message ? '<div class="tc-err">' + esc(tc.error_message) + '</div>' : '') + '</div>';
                     });
+                    if (tcs.length > 50) html += '<div class="dim" style="padding:8px;font-size:11px">...and ' + (tcs.length - 50) + ' more</div>';
                     html += '</div>';
                 }
-
-                document.getElementById('modalTitle').textContent = 'Session \u2014 ' + s.agent;
+                document.getElementById('modalTitle').textContent = 'Session \u2014 ' + (s.agent || '');
                 document.getElementById('detailContent').innerHTML = html;
                 document.getElementById('detailModal').style.display = 'block';
             } catch (e) { console.error('Detail:', e); }
         }
 
-        function closeDetail() { document.getElementById('detailModal').style.display = 'none'; }
-
+        // -----------------------------------------------------------------------
+        // Memories
+        // -----------------------------------------------------------------------
         async function loadMemories() {
             const el = document.getElementById('memoriesContent');
             try {
                 let url = 'memories?limit=200';
                 if (currentProject) url += '&project=' + encodeURIComponent(currentProject);
                 const memories = await api(url);
-                if (!memories.length) {
-                    el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x25C8;</div><div class="empty-text">no memories extracted yet</div></div>';
-                    return;
-                }
+                if (!memories.length) { el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x25C8;</div><div class="empty-text">no memories extracted yet</div></div>'; return; }
                 el.innerHTML = memories.map(m => {
                     const t = m.memory_type || 'general';
                     const d = m.created_at ? fmtDate(m.created_at) : '';
-                    return '<div class="memory-card">' +
-                        '<div class="card-meta"><span class="card-type">' + esc(t) + '</span><span class="card-date">' + d + '</span></div>' +
+                    const conf = typeof m.confidence === 'number' ? m.confidence : 1.0;
+                    return '<div class="memory-card" id="mem-' + esc(m.id) + '">' +
+                        '<div class="card-meta"><span class="card-type">' + esc(t) + '</span>' +
+                        '<div style="display:flex;align-items:center;gap:8px">' + confBar(conf) +
+                        '<span class="card-date">' + d + '</span>' +
+                        '<div class="card-actions"><button onclick="editMemory(\'' + esc(m.id) + '\',event)" title="edit">&#x270E;</button><button class="del" onclick="deleteMemory(\'' + esc(m.id) + '\',event)" title="delete">&#x2715;</button></div>' +
+                        '</div></div>' +
                         '<div class="card-body">' + esc(m.content) + '</div>' +
                         (m.project_id ? '<div class="card-footer">project: ' + esc(m.project_id) + '</div>' : '') +
                         '</div>';
                 }).join('');
-            } catch (e) {
-                el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x2297;</div><div class="empty-text">failed to load</div></div>';
-            }
+            } catch (e) { el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x2297;</div><div class="empty-text">failed to load</div></div>'; }
         }
 
+        async function editMemory(id, ev) {
+            ev.stopPropagation();
+            const card = document.getElementById('mem-' + id);
+            if (card.querySelector('.edit-form')) return;
+            const body = card.querySelector('.card-body');
+            const current = body.textContent;
+            const form = document.createElement('div');
+            form.className = 'edit-form';
+            form.innerHTML = '<textarea>' + esc(current) + '</textarea>' +
+                '<div class="edit-row"><span style="font-size:10px;color:var(--text-dim)">confidence:</span><input type="range" min="0" max="100" value="80" id="confSlider-' + id + '"><span id="confVal-' + id + '" style="font-size:10px;color:var(--text-dim);width:30px">80%</span></div>' +
+                '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px"><button class="btn btn-sm btn-ghost" onclick="this.closest(\'.edit-form\').remove()">cancel</button><button class="btn btn-sm" onclick="saveMemory(\'' + esc(id) + '\',this)">save</button></div>';
+            card.appendChild(form);
+            const slider = form.querySelector('input[type=range]');
+            const valEl = form.querySelector('[id^=confVal]');
+            slider.oninput = () => { valEl.textContent = slider.value + '%'; };
+        }
+
+        async function saveMemory(id, btn) {
+            const form = btn.closest('.edit-form');
+            const content = form.querySelector('textarea').value;
+            const conf = parseInt(form.querySelector('input[type=range]').value) / 100;
+            try {
+                await apiPut('memories/' + encodeURIComponent(id), { content, confidence: conf });
+                loadMemories();
+            } catch (e) { alert('Failed: ' + e.message); }
+        }
+
+        async function deleteMemory(id, ev) {
+            ev.stopPropagation();
+            if (!confirm('Delete this memory?')) return;
+            try { await apiDel('memories/' + encodeURIComponent(id)); loadMemories(); }
+            catch (e) { alert('Failed: ' + e.message); }
+        }
+
+        // -----------------------------------------------------------------------
+        // Facts
+        // -----------------------------------------------------------------------
+        async function loadFacts() {
+            const el = document.getElementById('factsContent');
+            el.innerHTML = '<div class="loading-state">loading</div>';
+            try {
+                const url = 'facts?limit=200&active_only=' + factsActiveOnly;
+                if (currentProject) url += '&project=' + encodeURIComponent(currentProject);
+                const facts = await api(url);
+                document.getElementById('factsCount').textContent = '(' + facts.length + ')';
+                if (!facts.length) { el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x25C6;</div><div class="empty-text">no facts in knowledge base</div></div>'; return; }
+                el.innerHTML = '<table><thead><tr><th>subject</th><th>predicate</th><th>object</th><th>confidence</th><th>agent</th><th>status</th></tr></thead><tbody>' +
+                    facts.map(f => {
+                        const active = !f.invalid_at;
+                        const cls = active ? 'fact-active' : 'fact-inactive';
+                        return '<tr class="' + cls + '" onclick="showFactHistory(\'' + esc(f.id) + '\')" style="cursor:pointer">' +
+                            '<td' + (active ? '' : ' class="fact-superseded"') + '>' + esc(f.subject) + '</td>' +
+                            '<td class="dim">' + esc(f.predicate) + '</td>' +
+                            '<td' + (active ? '' : ' class="fact-superseded"') + '>' + esc(f.object) + '</td>' +
+                            '<td>' + confBar(f.confidence || 1.0) + '</td>' +
+                            '<td class="dim">' + esc(f.source_agent || '-') + '</td>' +
+                            '<td><span class="status-badge">' + (active ? 'active' : 'superseded') + '</span></td></tr>';
+                    }).join('') + '</tbody></table>';
+            } catch (e) { el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x2297;</div><div class="empty-text">failed to load facts</div></div>'; }
+        }
+
+        function toggleFactsFilter() {
+            factsActiveOnly = !factsActiveOnly;
+            document.getElementById('factsToggle').textContent = factsActiveOnly ? 'active only' : 'show all';
+            loadFacts();
+        }
+
+        async function showFactHistory(id) {
+            try {
+                const history = await api('facts/' + encodeURIComponent(id) + '/history');
+                if (!Array.isArray(history) || !history.length) { alert('No history found'); return; }
+                const subject = history[0].subject;
+                let html = '<h3 style="font-size:13px;margin-bottom:12px;color:var(--text-secondary)">Evolution of: <span style="color:var(--accent)">' + esc(subject) + '</span></h3>';
+                html += '<div class="timeline">';
+                history.forEach((f, i) => {
+                    const active = !f.invalid_at;
+                    const prev = i > 0 ? history[i-1] : null;
+                    html += '<div class="timeline-item' + (active ? '' : ' superseded') + '">' +
+                        '<div class="timeline-meta">' + fmtDateTime(f.valid_at || f.created_at) + '<br>' +
+                        '<span style="color:' + (active ? 'var(--accent)' : 'var(--text-dim)') + '">' + (active ? 'ACTIVE' : 'superseded') + '</span>' +
+                        (f.source_agent ? '<br>' + esc(f.source_agent) : '') + '</div>' +
+                        '<div class="timeline-content">' +
+                        (prev && prev.object !== f.object ? '<div class="timeline-diff-del">' + esc(prev.predicate) + ' ' + esc(prev.object) + '</div>' : '') +
+                        '<div' + (prev && prev.object !== f.object ? ' class="timeline-diff-add"' : '') + '>' + esc(f.predicate) + ' <strong>' + esc(f.object) + '</strong></div>' +
+                        '<div style="margin-top:4px">' + confBar(f.confidence || 1.0) + '</div>' +
+                        '</div></div>';
+                });
+                html += '</div>';
+                document.getElementById('factModalTitle').textContent = 'Fact History \u2014 ' + subject;
+                document.getElementById('factModalContent').innerHTML = html;
+                document.getElementById('factModal').style.display = 'block';
+            } catch (e) { console.error('Fact history:', e); }
+        }
+
+        // -----------------------------------------------------------------------
+        // Decisions
+        // -----------------------------------------------------------------------
         async function loadDecisions() {
             const el = document.getElementById('decisionsContent');
             try {
                 let url = 'decisions';
                 if (currentProject) url += '?project=' + encodeURIComponent(currentProject);
                 const decisions = await api(url);
-                if (!decisions.length) {
-                    el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x2298;</div><div class="empty-text">no decisions recorded yet</div></div>';
-                    return;
-                }
+                if (!decisions.length) { el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x2298;</div><div class="empty-text">no decisions recorded yet</div></div>'; return; }
                 el.innerHTML = decisions.map(d => {
                     const dt = d.created_at ? fmtDate(d.created_at) : '';
                     return '<div class="decision-card">' +
@@ -530,12 +913,129 @@
                         '<div class="card-body" style="color:var(--text-primary);font-weight:500">' + esc(d.what) + '</div>' +
                         (d.why ? '<div class="card-body" style="margin-top:4px">\u21B3 ' + esc(d.why) + '</div>' : '') +
                         (d.alternatives && d.alternatives.length ? '<div class="card-footer">alternatives: ' + d.alternatives.map(esc).join(' \u00B7 ') + '</div>' : '') +
-                        (d.project_id ? '<div class="card-footer">project: ' + esc(d.project_id) + '</div>' : '') +
-                        '</div>';
+                        (d.project_id ? '<div class="card-footer">project: ' + esc(d.project_id) + '</div>' : '') + '</div>';
                 }).join('');
-            } catch (e) {
-                el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x2297;</div><div class="empty-text">failed to load</div></div>';
-            }
+            } catch (e) { el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x2297;</div><div class="empty-text">failed to load</div></div>'; }
+        }
+
+        // -----------------------------------------------------------------------
+        // Analytics
+        // -----------------------------------------------------------------------
+        const AGENT_COLORS = { claude: '#58a6ff', codex: '#00ff9c', gemini: '#bc8cff' };
+        const chartDefaults = { responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: '#8b949e', font: { family: 'JetBrains Mono', size: 10 } } } }, scales: { x: { ticks: { color: '#484f58', font: { family: 'JetBrains Mono', size: 9 } }, grid: { color: '#21262d' } }, y: { ticks: { color: '#484f58', font: { family: 'JetBrains Mono', size: 9 } }, grid: { color: '#21262d' } } } };
+
+        async function loadAnalytics() {
+            await Promise.all([loadAgentStats(), loadTimeline(), loadToolStats(), loadHotfiles()]);
+        }
+
+        async function loadAgentStats() {
+            try {
+                const agents = await api('stats/agents');
+                if (!Array.isArray(agents)) return;
+                // Metric cards
+                const el = document.getElementById('agentMetrics');
+                el.innerHTML = agents.map(a => {
+                    const color = AGENT_COLORS[a.agent?.toLowerCase()] || 'var(--text-primary)';
+                    return '<div class="metric-card"><div class="metric-agent" style="color:' + color + '">' + esc(a.agent) + '</div>' +
+                        '<div class="metric-val">' + fmtNum(a.sessions || 0) + '</div><div class="metric-label">sessions</div>' +
+                        '<div style="margin-top:8px;font-size:12px;color:var(--text-secondary)">' + fmtNum(a.total_tokens || 0) + ' tokens</div>' +
+                        '<div class="metric-label">' + (a.avg_duration ? Math.round(a.avg_duration) + ' min avg' : '-') + '</div></div>';
+                }).join('');
+                // Doughnut chart
+                if (charts.agent) charts.agent.destroy();
+                charts.agent = new Chart(document.getElementById('agentChart'), {
+                    type: 'doughnut',
+                    data: { labels: agents.map(a => a.agent), datasets: [{ data: agents.map(a => a.sessions || 0), backgroundColor: agents.map(a => AGENT_COLORS[a.agent?.toLowerCase()] || '#8b949e'), borderWidth: 0 }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#8b949e', font: { family: 'JetBrains Mono', size: 10 }, padding: 12 } } } }
+                });
+                // Token bar chart
+                if (charts.token) charts.token.destroy();
+                charts.token = new Chart(document.getElementById('tokenChart'), {
+                    type: 'bar',
+                    data: { labels: agents.map(a => a.agent), datasets: [{ label: 'Tokens', data: agents.map(a => a.total_tokens || 0), backgroundColor: agents.map(a => AGENT_COLORS[a.agent?.toLowerCase()] || '#8b949e'), borderRadius: 4 }] },
+                    options: { ...chartDefaults, indexAxis: 'y', plugins: { ...chartDefaults.plugins, legend: { display: false } } }
+                });
+            } catch (e) { console.error('Agent stats:', e); }
+        }
+
+        async function loadTimeline() {
+            try {
+                const data = await api('stats/timeline?days=30');
+                if (!Array.isArray(data) || !data.length) return;
+                const dates = [...new Set(data.map(d => d.date))].sort();
+                const agentNames = [...new Set(data.map(d => d.agent))];
+                const datasets = agentNames.map(agent => ({
+                    label: agent,
+                    data: dates.map(date => { const m = data.find(d => d.date === date && d.agent === agent); return m ? m.count : 0; }),
+                    borderColor: AGENT_COLORS[agent?.toLowerCase()] || '#8b949e',
+                    backgroundColor: (AGENT_COLORS[agent?.toLowerCase()] || '#8b949e') + '33',
+                    fill: true, tension: 0.3, borderWidth: 2, pointRadius: 1
+                }));
+                if (charts.timeline) charts.timeline.destroy();
+                charts.timeline = new Chart(document.getElementById('timelineChart'), {
+                    type: 'line',
+                    data: { labels: dates.map(d => { const dt = new Date(d); return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }), datasets },
+                    options: { ...chartDefaults, plugins: { ...chartDefaults.plugins, legend: { labels: { color: '#8b949e', font: { family: 'JetBrains Mono', size: 10 } } } } }
+                });
+            } catch (e) { console.error('Timeline:', e); }
+        }
+
+        async function loadToolStats() {
+            try {
+                const tools = await api('stats/tools');
+                if (!Array.isArray(tools) || !tools.length) return;
+                const top10 = tools.slice(0, 10);
+                const colors = ['#00ff9c', '#58a6ff', '#bc8cff', '#ffa657', '#ff7b72', '#e3b341', '#79c0ff', '#7ee787', '#d2a8ff', '#ffa198'];
+                if (charts.tool) charts.tool.destroy();
+                charts.tool = new Chart(document.getElementById('toolChart'), {
+                    type: 'doughnut',
+                    data: { labels: top10.map(t => t.tool_name || 'unknown'), datasets: [{ data: top10.map(t => t.count || 0), backgroundColor: colors, borderWidth: 0 }] },
+                    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { color: '#8b949e', font: { family: 'JetBrains Mono', size: 9 }, padding: 8 } } } }
+                });
+                // Table
+                const el = document.getElementById('toolStatsContent');
+                el.innerHTML = '<table><thead><tr><th>tool</th><th>calls</th><th>success rate</th><th>avg duration</th></tr></thead><tbody>' +
+                    tools.map(t => {
+                        const rate = t.count > 0 ? Math.round((t.success_count / t.count) * 100) : 0;
+                        const rateColor = rate >= 90 ? 'var(--accent)' : rate >= 70 ? 'var(--yellow)' : 'var(--red)';
+                        return '<tr><td>' + esc(t.tool_name || 'unknown') + '</td><td class="mono">' + fmtNum(t.count) + '</td>' +
+                            '<td class="mono" style="color:' + rateColor + '">' + rate + '%</td>' +
+                            '<td class="mono dim">' + (t.avg_duration_ms ? Math.round(t.avg_duration_ms) + 'ms' : '-') + '</td></tr>';
+                    }).join('') + '</tbody></table>';
+            } catch (e) { console.error('Tool stats:', e); }
+        }
+
+        async function loadHotfiles() {
+            try {
+                const files = await api('hotfiles?limit=15');
+                if (!Array.isArray(files) || !files.length) return;
+                if (charts.hotfile) charts.hotfile.destroy();
+                const labels = files.map(f => { const p = f.file_path || f[0] || ''; return p.length > 40 ? '...' + p.slice(-37) : p; });
+                const data = files.map(f => f.change_frequency || f[1] || 0);
+                charts.hotfile = new Chart(document.getElementById('hotfileChart'), {
+                    type: 'bar',
+                    data: { labels, datasets: [{ label: 'Changes', data, backgroundColor: '#00ff9c44', borderColor: '#00ff9c', borderWidth: 1, borderRadius: 3 }] },
+                    options: { ...chartDefaults, indexAxis: 'y', plugins: { ...chartDefaults.plugins, legend: { display: false } }, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, font: { family: 'JetBrains Mono', size: 8 } } } } }
+                });
+            } catch (e) { console.error('Hotfiles:', e); }
+        }
+
+        // -----------------------------------------------------------------------
+        // Search
+        // -----------------------------------------------------------------------
+        function setSearchMode(mode) {
+            searchMode = mode;
+            document.querySelectorAll('.mode-btn').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+            const input = document.getElementById('searchInput');
+            if (mode === 'xpath') input.placeholder = '//Session[node~"auth"]/Decision';
+            else if (mode === 'facts') input.placeholder = 'search facts by subject or object...';
+            else input.placeholder = 'search sessions, memories, facts...';
+        }
+
+        function toggleAgent(el, agent) {
+            el.classList.toggle('active');
+            if (activeAgents.has(agent)) activeAgents.delete(agent); else activeAgents.add(agent);
+            renderSessions(allSessions);
         }
 
         async function performSearch() {
@@ -548,34 +1048,51 @@
 
             try {
                 const eq = encodeURIComponent(q);
-                const [sessions, memories] = await Promise.all([
-                    api('search/sessions?q=' + eq),
-                    api('search/memories?q=' + eq),
-                ]);
-
                 let html = '';
-                if (sessions.length) {
-                    html += '<div style="padding:8px 6px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">sessions (' + sessions.length + ')</div>';
-                    sessions.forEach(s => {
-                        const dt = s.started_at ? fmtDate(s.started_at) : '';
-                        html += '<div class="search-result" onclick="showDetail(\'' + s.id + '\')">' +
-                            '<div class="sr-header"><span class="agent-tag agent-' + (s.agent||'').toLowerCase() + '">' + s.agent + '</span><span class="dim">' + (s.project_id || '') + '</span><span class="dim mono">' + dt + '</span></div>' +
-                            '<div class="sr-body">' + esc(s.summary || '\u2014') + '</div></div>';
-                    });
-                }
-                if (memories.length) {
-                    html += '<div style="padding:12px 6px 8px;font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">memories (' + memories.length + ')</div>';
-                    memories.forEach(m => {
-                        html += '<div class="memory-card"><div class="card-meta"><span class="card-type">' + esc(m.memory_type || 'general') + '</span></div><div class="card-body">' + esc(m.content) + '</div></div>';
-                    });
-                }
-                if (!sessions.length && !memories.length) {
-                    html = '<div class="empty-state"><div class="empty-icon">&#x2295;</div><div class="empty-text">no results for "' + esc(q) + '"</div></div>';
+                if (searchMode === 'xpath') {
+                    const results = await api('search/xpath?q=' + eq + '&limit=20');
+                    if (Array.isArray(results) && results.length) {
+                        html += '<div class="section-label">xpath results (' + results.length + ')</div>';
+                        results.forEach(r => {
+                            html += '<div class="memory-card"><div class="card-meta"><span class="card-type">' + esc(r.node_type || r.result_type || 'node') + '</span>' +
+                                '<span class="card-date">score: ' + (r.weight || r.score || 0).toFixed(2) + '</span></div>' +
+                                '<div class="card-body">' + esc(r.name || r.content || '') + '</div>' +
+                                (r.path ? '<div class="card-footer">path: ' + r.path.map(esc).join(' \u2192 ') + '</div>' : '') + '</div>';
+                        });
+                    } else html = '<div class="empty-state"><div class="empty-icon">&#x2295;</div><div class="empty-text">no XPath results for "' + esc(q) + '"</div></div>';
+                } else if (searchMode === 'facts') {
+                    const facts = await api('search/facts?q=' + eq);
+                    if (Array.isArray(facts) && facts.length) {
+                        html += '<div class="section-label">facts (' + facts.length + ')</div>';
+                        facts.forEach(f => {
+                            const active = !f.invalid_at;
+                            html += '<div class="memory-card" style="border-left-color:var(--orange)"><div class="card-meta"><span class="card-type" style="color:var(--orange)">fact</span>' +
+                                '<span class="status-badge">' + (active ? 'active' : 'superseded') + '</span></div>' +
+                                '<div class="card-body"><strong>' + esc(f.subject) + '</strong> ' + esc(f.predicate) + ' <strong>' + esc(f.object) + '</strong></div>' +
+                                '<div class="card-footer">' + confBar(f.confidence || 1.0) + '</div></div>';
+                        });
+                    } else html = '<div class="empty-state"><div class="empty-icon">&#x2295;</div><div class="empty-text">no facts matching "' + esc(q) + '"</div></div>';
+                } else {
+                    const [sessions, memories] = await Promise.all([api('search/sessions?q=' + eq), api('search/memories?q=' + eq)]);
+                    if (sessions.length) {
+                        html += '<div class="section-label">sessions (' + sessions.length + ')</div>';
+                        sessions.forEach(s => {
+                            const dt = s.started_at ? fmtDate(s.started_at) : '';
+                            html += '<div class="memory-card" style="cursor:pointer;border-left-color:var(--blue)" onclick="showDetail(\'' + esc(s.id) + '\')">' +
+                                '<div class="card-meta"><div style="display:flex;gap:6px;align-items:center">' + agentTag(s.agent) + '<span class="dim">' + esc(s.project_id || '') + '</span></div><span class="card-date">' + dt + '</span></div>' +
+                                '<div class="card-body">' + esc(s.summary || '\u2014') + '</div></div>';
+                        });
+                    }
+                    if (memories.length) {
+                        html += '<div class="section-label">memories (' + memories.length + ')</div>';
+                        memories.forEach(m => {
+                            html += '<div class="memory-card"><div class="card-meta"><span class="card-type">' + esc(m.memory_type || 'general') + '</span></div><div class="card-body">' + esc(m.content) + '</div></div>';
+                        });
+                    }
+                    if (!sessions.length && !memories.length) html = '<div class="empty-state"><div class="empty-icon">&#x2295;</div><div class="empty-text">no results for "' + esc(q) + '"</div></div>';
                 }
                 el.innerHTML = html;
-            } catch (e) {
-                el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x2297;</div><div class="empty-text">search failed</div></div>';
-            }
+            } catch (e) { el.innerHTML = '<div class="empty-state"><div class="empty-icon">&#x2297;</div><div class="empty-text">search failed: ' + esc(e.message) + '</div></div>'; }
         }
 
         function clearSearch() {
@@ -584,39 +1101,90 @@
             switchTab('sessions');
         }
 
-        function esc(s) {
-            if (!s) return '';
-            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        // -----------------------------------------------------------------------
+        // Add Note / Decision
+        // -----------------------------------------------------------------------
+        function showAddNote() { document.getElementById('noteModal').style.display = 'block'; document.getElementById('noteText').focus(); }
+        function showAddDecision() { document.getElementById('decisionModal').style.display = 'block'; document.getElementById('decWhat').focus(); }
+
+        async function submitNote() {
+            const text = document.getElementById('noteText').value.trim();
+            if (!text) return;
+            try {
+                await apiPost('notes', { text, project: currentProject || undefined });
+                document.getElementById('noteText').value = '';
+                closeModal('noteModal');
+                loadMemories();
+            } catch (e) { alert('Failed: ' + e.message); }
         }
 
-        function fmtDate(s) {
-            try { return new Date(s).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
-            catch { return s; }
+        async function submitDecision() {
+            const what = document.getElementById('decWhat').value.trim();
+            const why = document.getElementById('decWhy').value.trim();
+            if (!what) return;
+            try {
+                await apiPost('decisions', { what, why: why || undefined, project: currentProject || undefined });
+                document.getElementById('decWhat').value = '';
+                document.getElementById('decWhy').value = '';
+                closeModal('decisionModal');
+                loadDecisions();
+            } catch (e) { alert('Failed: ' + e.message); }
         }
 
-        function fmtNum(n) {
-            if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-            if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
-            return String(n);
+        // -----------------------------------------------------------------------
+        // Modals & Command Palette
+        // -----------------------------------------------------------------------
+        function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+
+        function openCmdPalette() {
+            document.getElementById('cmdPalette').style.display = 'block';
+            const input = document.getElementById('cmdInput');
+            input.value = '';
+            input.focus();
         }
+        function closeCmdPalette() { document.getElementById('cmdPalette').style.display = 'none'; }
 
-        document.getElementById('projectFilter').addEventListener('change', e => {
-            currentProject = e.target.value;
-            loadSessions(currentProject);
-        });
+        function cmdGo(tab) { closeCmdPalette(); switchTab(tab); }
 
-        document.getElementById('searchInput').addEventListener('keydown', e => {
-            if (e.key === 'Enter') performSearch();
-        });
-
-        document.getElementById('detailModal').addEventListener('click', e => {
-            if (e.target === document.getElementById('detailModal')) closeDetail();
-        });
-
+        // -----------------------------------------------------------------------
+        // Keyboard shortcuts
+        // -----------------------------------------------------------------------
         document.addEventListener('keydown', e => {
-            if (e.key === 'Escape') closeDetail();
+            // Cmd+K or Ctrl+K → command palette
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); openCmdPalette(); return; }
+            // Escape → close modals
+            if (e.key === 'Escape') {
+                if (document.getElementById('cmdPalette').style.display === 'block') { closeCmdPalette(); return; }
+                document.querySelectorAll('.modal-overlay').forEach(m => m.style.display = 'none');
+                return;
+            }
+            // Don't handle shortcuts when typing in inputs
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+            // / → focus search
+            if (e.key === '/') { e.preventDefault(); document.getElementById('searchInput').focus(); }
         });
 
+        document.getElementById('searchInput').addEventListener('keydown', e => { if (e.key === 'Enter') performSearch(); });
+
+        document.getElementById('cmdInput').addEventListener('keydown', e => {
+            if (e.key === 'Escape') closeCmdPalette();
+            if (e.key === 'Enter') {
+                const val = e.target.value.trim().toLowerCase();
+                const tabs = ['sessions', 'memories', 'facts', 'decisions', 'analytics'];
+                const match = tabs.find(t => t.startsWith(val));
+                if (match) cmdGo(match);
+                else { closeCmdPalette(); document.getElementById('searchInput').value = e.target.value; performSearch(); }
+            }
+        });
+
+        document.getElementById('cmdPalette').addEventListener('click', e => { if (e.target === document.getElementById('cmdPalette')) closeCmdPalette(); });
+        document.querySelectorAll('.modal-overlay').forEach(m => m.addEventListener('click', e => { if (e.target === m) m.style.display = 'none'; }));
+
+        document.getElementById('projectFilter').addEventListener('change', e => { currentProject = e.target.value; loadSessions(currentProject); });
+
+        // -----------------------------------------------------------------------
+        // Init
+        // -----------------------------------------------------------------------
         loadStats();
         loadProjects();
         loadSessions();

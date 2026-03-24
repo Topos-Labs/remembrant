@@ -280,6 +280,11 @@ impl<'a> Parser<'a> {
             return self.parse_positional_or_range();
         }
 
+        // Strip optional '@' prefix (standard XPath attribute syntax)
+        if self.peek() == Some('@') {
+            self.advance(1);
+        }
+
         // Attribute / comparison: IDENT op VALUE
         self.parse_attr_or_comparison()
     }
@@ -1136,5 +1141,70 @@ mod tests {
         let q = parse("//Symbol").unwrap();
         let results = evaluate(&q, &tree, &substring_scorer);
         assert!(results.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // @attr syntax tests (standard XPath attribute prefix)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_at_attr_filter() {
+        // @attr=value should parse identically to attr=value
+        let with_at = parse(r#"//Session[@agent="claude"]"#).unwrap();
+        let without_at = parse(r#"//Session[agent="claude"]"#).unwrap();
+        assert_eq!(format!("{with_at:?}"), format!("{without_at:?}"));
+    }
+
+    #[test]
+    fn parse_at_attr_comparison() {
+        let q = parse(r#"//ToolCall[@confidence>0.8]"#).unwrap();
+        let step = &q.steps[0];
+        assert_eq!(step.predicates.len(), 1);
+        match &step.predicates[0] {
+            Predicate::Comparison(attr, CompOp::Gt, val) => {
+                assert_eq!(attr, "confidence");
+                assert_eq!(val, "0.8");
+            }
+            other => panic!("expected Comparison, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn eval_at_attr_filter_then_child() {
+        let tree = make_test_tree();
+        let q = parse(r#"//Session[@agent="claude"]/Decision"#).unwrap();
+        let results = evaluate(&q, &tree, &substring_scorer);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].node_id, "d1");
+    }
+
+    #[test]
+    fn parse_at_attr_in_and_predicate() {
+        let q = parse(r#"//Session[@agent="claude" and node~"auth"]"#).unwrap();
+        let step = &q.steps[0];
+        assert_eq!(step.predicates.len(), 1);
+        match &step.predicates[0] {
+            Predicate::And(_, _) => {} // expected
+            other => panic!("expected And, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_at_attr_in_or_predicate() {
+        let q = parse(r#"//Session[@agent="claude" or @agent="gpt"]"#).unwrap();
+        let step = &q.steps[0];
+        match &step.predicates[0] {
+            Predicate::Or(_, _) => {}
+            other => panic!("expected Or, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn eval_at_attr_comparison_lte() {
+        let tree = make_test_tree();
+        let q = parse("//ToolCall[@confidence<=0.5]").unwrap();
+        let results = evaluate(&q, &tree, &substring_scorer);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].node_id, "tc2");
     }
 }

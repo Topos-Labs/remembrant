@@ -13,8 +13,7 @@ Remembrant is a Rust-based CLI tool (`rem`) that ingests coding agent artifacts 
 This is a Cargo workspace (edition 2024) with three crates:
 
 - **engine** (`remembrant-engine`): Core library — ingestion, storage, search, graph, Semantic XPath
-- **cli** (`remembrant`): Binary crate providing the `rem` CLI tool (22 commands)
-- **desktop** (`src-tauri`): Tauri v2 desktop application
+- **cli** (`remembrant`): Binary crate providing the `rem` CLI tool (22 commands) + web dashboard
 
 ### Key Modules
 

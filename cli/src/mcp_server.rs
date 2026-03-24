@@ -559,8 +559,9 @@ impl McpServer {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("'object' required for facts"))?;
 
+                let fact_id = uuid::Uuid::new_v4().to_string();
                 let fact = Fact {
-                    id: uuid::Uuid::new_v4().to_string(),
+                    id: fact_id.clone(),
                     project_id: project.map(|s| s.to_string()),
                     subject: subject.to_string(),
                     predicate: predicate.to_string(),
@@ -575,7 +576,9 @@ impl McpServer {
                 };
 
                 self.store.upsert_fact(&fact)?;
-                Ok(format!("Fact added: {subject} {predicate} {object}"))
+                Ok(format!(
+                    "Fact added (id: {fact_id}): {subject} {predicate} {object}"
+                ))
             }
             "note" => {
                 let text = args
@@ -674,8 +677,9 @@ impl McpServer {
             .unwrap_or_default();
         let project = args.get("project").and_then(|v| v.as_str());
 
+        let decision_id = uuid::Uuid::new_v4().to_string();
         let decision = remembrant_engine::store::duckdb::Decision {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: decision_id.clone(),
             session_id: None,
             project_id: project.map(|s| s.to_string()),
             decision_type: Some("manual".to_string()),
@@ -688,7 +692,7 @@ impl McpServer {
         };
 
         self.store.insert_decision(&decision)?;
-        Ok(format!("Decision recorded: {what}"))
+        Ok(format!("Decision recorded (id: {decision_id}): {what}"))
     }
 
     fn tool_mem_update(&self, args: &Value) -> Result<String> {
